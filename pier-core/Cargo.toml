@@ -1,0 +1,17 @@
+[package]
+name        = "pier-core"
+version     = "0.0.1"
+edition     = "2024"
+license     = "MIT"
+authors     = [ "DehKaine" ]
+description = "Pier Core"
+repository  = "https://github.com/DehKaine/pier"
+
+[dependencies]
+pier-macro = { path = "../pier-macro" }
+pier-ui = { path = "../pier-ui" }
+
+# External dependencies
+crossterm   = { workspace = true }
+ratatui     = { workspace = true }
+

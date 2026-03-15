@@ -1,0 +1,16 @@
+[package]
+name        = "pier-ui"
+version     = "0.0.1"
+edition     = "2024"
+license     = "MIT"
+authors     = [ "DehKaine" ]
+description = "Pier UI Component"
+repository  = "https://github.com/DehKaine/pier"
+
+[dependencies]
+pier-macro = { path = "../pier-macro" }
+
+# External dependencies
+crossterm   = { workspace = true }
+ratatui     = { workspace = true }
+

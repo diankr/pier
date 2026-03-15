@@ -1,0 +1,25 @@
+[package]
+name        = "pier-ws"
+version     = "0.0.1"
+edition     = "2024"
+license     = "MIT"
+authors     = [ "DehKaine" ]
+description = "Pier workspace"
+repository  = "https://github.com/DehKaine/pier"
+
+[dependencies]
+pier-core  = { path = "../pier-core" }
+pier-macro = { path = "../pier-macro" }
+pier-ui    = { path = "../pier-ui" }
+
+# External dependencies
+anyhow       = { workspace = true }
+crossterm    = { workspace = true }
+# mlua         = { workspace = true }
+ratatui      = { workspace = true }
+tokio        = { workspace = true }
+tokio-stream = { workspace = true }
+
+[[bin]]
+name = "pier"
+path = "src/main.rs"
