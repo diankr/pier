@@ -1,50 +1,93 @@
-use std::{io::Stdout, sync::atomic::Ordering, time::{Duration, Instant}};
+use std::{io::{self, Stdout}, time::Duration};
 
 use anyhow::Result;
-use pier_ui::ui::render_root;
-use tokio::{select, time::sleep};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use pier_core::Core;
-// use pier_ui::Core;
-// use pier_macro;
+use pier_ui::ui::{render_root, UiState};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use tokio::time::sleep;
 
-// use crate::{Dispatcher, Signals, Term};
-use ratatui::{Terminal, backend::{self, CrosstermBackend}};
+use super::commands::Quit;
+
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
 pub(crate) struct App {
-	pub(crate) core: Core,
-	pub(crate) term: Option<Term>,
-	// pub(crate) signals: Signals,
+    pub(crate) core: Core,
+    pub(crate) term: Term,
+    pub(crate) state: UiState,
+    pub(crate) should_quit: bool,
 }
 
 impl App {
-	pub(crate) async fn serve() -> Result<()> {
-		// let term = Term::start();
-		let backend = CrosstermBackend::new(std::io::stdout());
-		// let terminal = Terminal::new(backend)?;
+    fn new() -> Result<Self> {
+        let backend = CrosstermBackend::new(io::stdout());
+        let term = Terminal::new(backend)?;
+        Ok(Self {
+            core: Core::new(),
+            term,
+            state: UiState::new(),
+            should_quit: false,
+        })
+    }
 
-		// let mut app = App {
-		// 	core:Core::new(),
-		// 	term: Some(terminal),
-		// };
+    pub(crate) async fn serve() -> Result<()> {
+        let mut app = Self::new()?;
+        app.setup_terminal()?;
 
-		let mut term = Terminal::new(backend)?;
-		let mut state = pier_ui::ui::UiState::new();
+        let result = app.run().await;
 
-		let temp: bool = true;
-		let timeout = Duration::from_millis(10);
+        app.restore_terminal()?;
+        result
+    }
 
-		loop {
-			if temp {
-				term.draw(|f| {
-					let area = f.area();
-					render_root(f, area, &state);
-				})?;
-				sleep(Duration::from_millis(10)).await;
-			} else {
-				break;
-			}
-		}
-		Ok(())
-	}
+    fn setup_terminal(&mut self) -> Result<()> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        self.term.hide_cursor()?;
+        Ok(())
+    }
+
+    fn restore_terminal(&mut self) -> Result<()> {
+        disable_raw_mode()?;
+        execute!(io::stdout(), LeaveAlternateScreen)?;
+        self.term.show_cursor()?;
+        Ok(())
+    }
+
+    async fn run(&mut self) -> Result<()> {
+        loop {
+            if self.should_quit {
+                break;
+            }
+
+            self.term.draw(|f| {
+                let area = f.area();
+                render_root(f, area, &self.state);
+            })?;
+
+            if event::poll(Duration::from_millis(10))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind == KeyEventKind::Press {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Char('q'), _) => {
+                                let _ = Quit::new(false); // Here we can eventually process the Quit command
+                                self.should_quit = true;
+                            }
+                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                                self.should_quit = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            sleep(Duration::from_millis(10)).await;
+        }
+        Ok(())
+    }
 }
