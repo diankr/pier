@@ -77,7 +77,7 @@ impl App {
 				if let Event::Key(key) = event::read()? {
 					if key.kind == KeyEventKind::Press {
 						match (key.code, key.modifiers) {
-							(KeyCode::Char('q'), _) => {
+							(KeyCode::Char('Q'), _) => {
 								let _ = Quit::new(false);
 								self.should_quit = true;
 							}
@@ -89,6 +89,20 @@ impl App {
 							(KeyCode::Char('3'), _) => self.core.active_panel = ActivePanel::Pending,
 							(KeyCode::Char('4'), _) => self.core.active_panel = ActivePanel::Detail,
 							(KeyCode::Char('5'), _) => self.core.active_panel = ActivePanel::Log,
+							
+							// FileTree 导航按键
+							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.filetree.move_down();
+							}
+							(KeyCode::Char('k'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.filetree.move_up();
+							}
+							(KeyCode::Char('l'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.filetree.enter_dir();
+							}
+							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.filetree.leave_dir();
+							}
 							_ => {}
 						}
 					}

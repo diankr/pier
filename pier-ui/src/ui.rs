@@ -1,8 +1,8 @@
 use pier_core::core::{ActivePanel, Core};
 use ratatui::{
 	layout::{Constraint, Direction, Layout, Rect},
-	style::{Color, Style},
-	widgets::{Block, Borders},
+	style::{Color, Modifier, Style},
+	widgets::{Block, Borders, List, ListItem, Paragraph},
 	Frame,
 };
 
@@ -22,15 +22,13 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 	let root_chunks = Layout::default()
 		.direction(Direction::Vertical)
 		.constraints([
-			Constraint::Length(2),
 			Constraint::Min(1),
-			Constraint::Length(2),
+			Constraint::Length(1),
 		])
 		.split(area);
 
-	let header = root_chunks[0];
-	let main_rect = root_chunks[1];
-	let footer = root_chunks[2];
+	let main_rect = root_chunks[0];
+	let footer_area = root_chunks[1];
 
 	let main_chunks = Layout::default()
 		.direction(Direction::Horizontal)
@@ -79,15 +77,53 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 			.border_style(style)
 	};
 
-	f.render_widget(Block::default().title("Header").borders(Borders::ALL), header);
-	f.render_widget(Block::default().title("Footer").borders(Borders::ALL), footer);
+	// --- Header 已删除 ---
 
-	f.render_widget(get_block(" [1] Scope ", ActivePanel::Scope), scope_area);
-	f.render_widget(
-		get_block(" [2] FileTree ", ActivePanel::FileTree),
-		filetree_area,
-	);
-	f.render_widget(get_block(" [3] Pending ", ActivePanel::Pending), pending_area);
-	f.render_widget(get_block(" [4] Detail ", ActivePanel::Detail), detail_area);
-	f.render_widget(get_block(" [5] Log ", ActivePanel::Log), log_area);
+	// Scope
+	f.render_widget(get_block(" Scope ", ActivePanel::Scope), scope_area);
+	
+	// FileTree (2-Column)
+	let ft_chunks = Layout::default()
+		.direction(Direction::Horizontal)
+		.constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+		.split(filetree_area);
+	
+	let parent_items: Vec<ListItem> = core.filetree.parent_files.iter().map(|f| {
+		ListItem::new(format!(" {} ", f.name))
+	}).collect();
+	
+	let current_items: Vec<ListItem> = core.filetree.files.iter().map(|f| {
+		let prefix = if f.is_dir { " " } else { " " };
+		ListItem::new(format!("{}{}", prefix, f.name))
+	}).collect();
+
+	let parent_list = List::new(parent_items)
+		.block(get_block(" Parent ", ActivePanel::FileTree))
+		.highlight_style(Style::default().add_modifier(Modifier::DIM))
+		.highlight_symbol(" ");
+
+	let current_list = List::new(current_items)
+		.block(get_block(" FileTree ", ActivePanel::FileTree))
+		.highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD))
+		.highlight_symbol("> ");
+
+	let mut parent_list_state = ratatui::widgets::ListState::default();
+	parent_list_state.select(Some(core.filetree.parent_selected));
+	
+	let mut current_list_state = ratatui::widgets::ListState::default();
+	current_list_state.select(Some(core.filetree.selected));
+
+	f.render_stateful_widget(parent_list, ft_chunks[0], &mut parent_list_state);
+	f.render_stateful_widget(current_list, ft_chunks[1], &mut current_list_state);
+
+	// Right Panels
+	f.render_widget(get_block(" Pending ", ActivePanel::Pending), pending_area);
+	f.render_widget(get_block(" Detail ", ActivePanel::Detail), detail_area);
+	f.render_widget(get_block(" Log ", ActivePanel::Log), log_area);
+
+	// Footer
+	let footer_text = format!(" [Q] Quit | [1-5] Switch Panel | Path: {}", core.filetree.current_path.display());
+	let footer = Paragraph::new(footer_text)
+		.style(Style::default().fg(Color::DarkGray));
+	f.render_widget(footer, footer_area);
 }
