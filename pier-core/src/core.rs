@@ -7,8 +7,8 @@ pub enum ActivePanel {
 	Pending,
 	Detail,
 	Log,
-    Input,
-    Confirm,
+	Input,
+	Confirm,
 }
 
 pub struct Core {
@@ -24,15 +24,15 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new() -> Self {
-        Self {
-            active_panel: ActivePanel::FileTree,
-            scope: ActivePanel::Scope,
-            filetree: ActivePanel::FileTree,
-            pending: ActivePanel::Pending,
-            log: ActivePanel::Log,
-            input: ActivePanel::Input,
-            confirm: ActivePanel::Confirm,
-        }
-    }
+	pub fn new() -> Self {
+		Self {
+			active_panel: ActivePanel::FileTree,
+			scope: ActivePanel::Scope,
+			filetree: ActivePanel::FileTree,
+			pending: ActivePanel::Pending,
+			log: ActivePanel::Log,
+			input: ActivePanel::Input,
+			confirm: ActivePanel::Confirm,
+		}
+	}
 }

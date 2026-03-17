@@ -841,7 +841,6 @@ version = "0.0.1"
 dependencies = [
  "crossterm",
  "pier-macro",
- "pier-ui",
  "ratatui",
 ]
 
@@ -854,6 +853,7 @@ name = "pier-ui"
 version = "0.0.1"
 dependencies = [
  "crossterm",
+ "pier-core",
  "pier-macro",
  "ratatui",
 ]
