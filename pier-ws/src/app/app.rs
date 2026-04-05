@@ -28,10 +28,11 @@ pub(crate) struct App {
 
 impl App {
 	fn new() -> Result<Self> {
+		let core = Core::new().map_err(|e| anyhow::anyhow!(e))?;
 		let backend = CrosstermBackend::new(io::stdout());
 		let term = Terminal::new(backend)?;
 		Ok(Self {
-			core: Core::new(),
+			core,
 			term,
 			state: UiState::new(),
 			should_quit: false,
