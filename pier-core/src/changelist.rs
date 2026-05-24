@@ -89,7 +89,7 @@ pub fn fetch_changelist_detail(id: &str, root: &Path) -> Result<ChangeListDetail
 	})
 }
 
-fn save_to_cache(items: &[ChangeListItem]) {
+pub fn save_to_cache(items: &[ChangeListItem]) {
 	if let Some(cache_dir) = dirs::cache_dir() {
 		let pier_cache = cache_dir.join("pier");
 		if let Err(_) = fs::create_dir_all(&pier_cache) {

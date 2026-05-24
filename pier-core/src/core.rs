@@ -4,6 +4,7 @@ use std::process::Command;
 use std::collections::HashSet;
 use crate::filetree::FileTree;
 use crate::changelist::{ChangeListItem, fetch_changelists, fetch_changelist_detail};
+use crate::detail::{FileDetail, fetch_file_detail};
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ActivePanel {
@@ -26,6 +27,9 @@ pub struct Core {
 	pub expanded_ids: HashSet<String>,
 	pub cl_cursor: usize,
 
+	pub current_detail: Option<FileDetail>,
+	pub detail_error: Option<String>,
+
 	pub scope_panel: ActivePanel,
 	pub filetree_panel: ActivePanel,
 	pub pending_panel: ActivePanel,
@@ -46,7 +50,7 @@ impl Core {
 
 		let changelists = fetch_changelists(&client_root)?;
 
-		Ok(Self {
+		let mut core = Self {
 			active_panel: ActivePanel::FileTree,
 			filetree: FileTree::new(client_root.clone()),
 			client_root,
@@ -54,6 +58,9 @@ impl Core {
 			changelists,
 			expanded_ids: HashSet::new(),
 			cl_cursor: 0,
+
+			current_detail: None,
+			detail_error: None,
 
 			scope_panel: ActivePanel::Scope,
 			filetree_panel: ActivePanel::FileTree,
@@ -63,7 +70,47 @@ impl Core {
 			log_panel: ActivePanel::Log,
 			input: ActivePanel::Input,
 			confirm: ActivePanel::Confirm,
-		})
+		};
+		core.update_detail();
+		Ok(core)
+	}
+
+	pub fn update_detail(&mut self) {
+		if let Some(file) = self.filetree.files.get(self.filetree.selected) {
+			match fetch_file_detail(&file.path) {
+				Ok(detail) => {
+					self.current_detail = Some(detail);
+					self.detail_error = None;
+				}
+				Err(e) => {
+					self.current_detail = None;
+					self.detail_error = Some(e);
+				}
+			}
+		} else {
+			self.current_detail = None;
+			self.detail_error = None;
+		}
+	}
+
+	pub fn ft_move_down(&mut self) {
+		self.filetree.move_down();
+		self.update_detail();
+	}
+
+	pub fn ft_move_up(&mut self) {
+		self.filetree.move_up();
+		self.update_detail();
+	}
+
+	pub fn ft_enter_dir(&mut self) {
+		self.filetree.enter_dir();
+		self.update_detail();
+	}
+
+	pub fn ft_leave_dir(&mut self) {
+		self.filetree.leave_dir();
+		self.update_detail();
 	}
 
 	pub fn cl_move_down(&mut self) {
@@ -91,6 +138,8 @@ impl Core {
 							}
 						}
 					}
+					// 展开后更新缓存
+					crate::changelist::save_to_cache(&self.changelists);
 				}
 			}
 		}

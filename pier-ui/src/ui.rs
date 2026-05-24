@@ -70,20 +70,8 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 	let detail_area = right_chunks[1];
 	let log_area = right_chunks[2];
 
-	let get_block = |title: &'static str, panel: ActivePanel| {
-		let style = if core.active_panel == panel {
-			Style::default().fg(Color::Yellow)
-		} else {
-			Style::default().fg(Color::DarkGray)
-		};
-		Block::default()
-			.title(title)
-			.borders(Borders::ALL)
-			.border_style(style)
-	};
-
 	// Scope
-	let scope_block = get_block("[1] Scope ", ActivePanel::Scope);
+	let scope_block = get_block("[1] Scope ", ActivePanel::Scope, core.active_panel);
 	let scope_inner = scope_block.inner(scope_area);
 	
 	let root_str = core.client_root.to_string_lossy();
@@ -114,7 +102,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 	f.render_widget(Paragraph::new(display_text).block(scope_block), scope_area);
 	
 	// FileTree (Single Outer Block)
-	let ft_block = get_block("[2] FileTree ", ActivePanel::FileTree);
+	let ft_block = get_block("[2] FileTree ", ActivePanel::FileTree, core.active_panel);
 	let ft_inner_area = ft_block.inner(filetree_area);
 	f.render_widget(ft_block, filetree_area);
 
@@ -149,18 +137,19 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 	f.render_stateful_widget(parent_list, ft_chunks[0], &mut parent_list_state);
 	f.render_stateful_widget(current_list, ft_chunks[1], &mut current_list_state);
 
-	f.render_widget(get_block("[3] Pending ", ActivePanel::Pending), pending_area);
+	f.render_widget(get_block("[3] Pending ", ActivePanel::Pending, core.active_panel), pending_area);
 
 	// Right Panels
-	let cl_block = get_block("[4] ChangeList ", ActivePanel::ChangeList);
+	let cl_block = get_block("[4] ChangeList ", ActivePanel::ChangeList, core.active_panel);
 	let mut cl_items: Vec<ListItem> = Vec::new();
 	let mut current_ui_index = 0;
 	let mut selectable_index = 0;
 	let mut selected_ui_index = 0;
 
 	// 计算可用宽度：
-	// 总宽度 - 左右边框(2) - 前缀符号位(2) = area.width - 4
-	let content_width = (changelist_area.width as usize).saturating_sub(4);
+	// 总宽度 - 左右边框(2) - 前缀符号位(2) - 右边边距(1) = area.width - 5
+	let content_width = (changelist_area.width as usize).saturating_sub(5);
+	let is_cl_active = core.active_panel == ActivePanel::ChangeList;
 
 	for (i, cl) in core.changelists.iter().enumerate() {
 		let is_expanded = core.expanded_ids.contains(&cl.id);
@@ -168,7 +157,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 		let is_selected = core.cl_cursor == selectable_index;
 		
 		// 1. 确定前缀符号 (2 字符)
-		let symbol = if is_selected {
+		let symbol = if is_selected && is_cl_active {
 			if is_head { "󰌕 " } else { "> " }
 		} else {
 			if is_head { "󰌕 " } else { "  " }
@@ -184,7 +173,8 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 		let time_len = time_str.len();
 		
 		let padding = content_width.saturating_sub(id_len).saturating_sub(author_len).saturating_sub(time_len);
-		let base_line = format!("{}{}{}{}", id_str, author_str, " ".repeat(padding), time_str);
+		// 右侧增加一个空格
+		let base_line = format!("{}{}{}{} ", id_str, author_str, " ".repeat(padding), time_str);
 		
 		cl_items.push(ListItem::new(format!("{}{}", symbol, base_line)));
 		if is_selected {
@@ -214,9 +204,8 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 				// 3. 文件列表
 				for (_f_idx, file) in details.files.iter().enumerate() {
 					let is_file_selected = core.cl_cursor == selectable_index;
-					let file_symbol = if is_selected && is_file_selected { "> " } else { "  " };
+					let file_symbol = if is_cl_active && is_file_selected { "> " } else { "  " };
 					
-					// 文件行的缩进逻辑：前缀(2) + 缩进(3) = 5
 					let file_prefix_str = format!("{}   ", file_symbol);
 					let file_info = format!("{} | {} | ", file.revision, file.action);
 					
@@ -228,9 +217,9 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 					
 					let file_line = if path_len <= avail_path_width {
 						let path_padding = avail_path_width.saturating_sub(path_len);
-						format!("{}{}{}{}", file_prefix_str, file_info, " ".repeat(path_padding), display_path)
+						format!("{}{}{}{}{} ", file_prefix_str, file_info, " ".repeat(path_padding), display_path, " ")
 					} else {
-						format!("{}{}{}", file_prefix_str, file_info, display_path)
+						format!("{}{}{} ", file_prefix_str, file_info, display_path)
 					};
 
 					cl_items.push(ListItem::new(file_line));
@@ -244,20 +233,86 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 		}
 	}
 
-	let cl_list = List::new(cl_items)
-		.highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD));
+	let highlight_style = if is_cl_active {
+		Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD)
+	} else {
+		Style::default().add_modifier(Modifier::UNDERLINED)
+	};
+
+	let cl_list = List::new(cl_items).highlight_style(highlight_style);
 
 	let mut cl_list_state = ratatui::widgets::ListState::default();
 	cl_list_state.select(Some(selected_ui_index));
 
 	f.render_stateful_widget(cl_list.block(cl_block), changelist_area, &mut cl_list_state);
 
-	f.render_widget(get_block("[Tab] Detail ", ActivePanel::Detail), detail_area);
-	f.render_widget(get_block("[@] Log ", ActivePanel::Log), log_area);
+	render_detail(f, detail_area, core);
+	f.render_widget(get_block("[@] Log ", ActivePanel::Log, core.active_panel), log_area);
 
 	// Footer
 	let footer_text = format!(" [Q] Quit | [1-5] Switch Panel | Path: {}", core.filetree.current_path.display());
 	let footer = Paragraph::new(footer_text)
 		.style(Style::default().fg(Color::DarkGray));
 	f.render_widget(footer, footer_area);
+}
+
+fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
+	let block = get_block("[Tab] Detail ", ActivePanel::Detail, core.active_panel);
+	let inner = block.inner(area);
+	f.render_widget(block, area);
+
+	if let Some(detail) = &core.current_detail {
+		let labels = [
+			"FileName", "FileSize", "DepotPath", "Revision", 
+			"DateModified", "ChangeList", "Action", "LatestUser", "CheckoutBy"
+		];
+		let values = [
+			&detail.filename, &detail.filesize, &detail.depot_path, &detail.revision,
+			&detail.date_modified, &detail.changelist, &detail.action, &detail.latest_user, &detail.checkout_by
+		];
+
+		let mut items = Vec::new();
+		let content_width = (inner.width as usize).saturating_sub(2); // 减去左右内边距
+
+		for (label, value) in labels.iter().zip(values.iter()) {
+			let padding = content_width.saturating_sub(label.len()).saturating_sub(value.len());
+			items.push(ListItem::new(format!("{} {}{}", label, " ".repeat(padding), value)));
+		}
+
+		let list = List::new(items);
+		f.render_widget(list, inner);
+	} else if let Some(err) = &core.detail_error {
+		let text = if err.contains("Not a Perforce-managed object") {
+			"Not a Perforce-managed object"
+		} else {
+			err
+		};
+		let p = Paragraph::new(text)
+			.style(Style::default().fg(Color::DarkGray))
+			.alignment(ratatui::layout::Alignment::Center);
+		
+		// 垂直居中逻辑
+		let vertical_chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.constraints([
+				Constraint::Percentage(45),
+				Constraint::Min(1),
+				Constraint::Percentage(45),
+			])
+			.split(inner);
+		
+		f.render_widget(p, vertical_chunks[1]);
+	}
+}
+
+fn get_block(title: &'static str, panel: ActivePanel, active_panel: ActivePanel) -> Block<'static> {
+	let style = if active_panel == panel {
+		Style::default().fg(Color::Yellow)
+	} else {
+		Style::default().fg(Color::DarkGray)
+	};
+	Block::default()
+		.title(title)
+		.borders(Borders::ALL)
+		.border_style(style)
 }
