@@ -1,1 +1,1 @@
-pier_macro::mod_pub!(core filetree);
+pier_macro::mod_pub!(core filetree changelist);

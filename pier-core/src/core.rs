@@ -1,13 +1,16 @@
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
+use std::collections::HashSet;
 use crate::filetree::FileTree;
+use crate::changelist::{ChangeListItem, fetch_changelists, fetch_changelist_detail};
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ActivePanel {
 	Scope,
 	FileTree,
 	Pending,
+	ChangeList,
 	Detail,
 	Log,
 	Input,
@@ -19,9 +22,15 @@ pub struct Core {
 	pub filetree: FileTree,
 	pub client_root: PathBuf,
 
+	pub changelists: Vec<ChangeListItem>,
+	pub expanded_ids: HashSet<String>,
+	pub cl_cursor: usize,
+
 	pub scope_panel: ActivePanel,
 	pub filetree_panel: ActivePanel,
 	pub pending_panel: ActivePanel,
+	pub changelist_panel: ActivePanel,
+	pub detail_panel: ActivePanel,
 	pub log_panel: ActivePanel,
 
 	pub input: ActivePanel,
@@ -35,18 +44,121 @@ impl Core {
 		// 自动 cd 到 client root
 		let _ = env::set_current_dir(&client_root);
 
+		let changelists = fetch_changelists(&client_root)?;
+
 		Ok(Self {
 			active_panel: ActivePanel::FileTree,
 			filetree: FileTree::new(client_root.clone()),
 			client_root,
 
+			changelists,
+			expanded_ids: HashSet::new(),
+			cl_cursor: 0,
+
 			scope_panel: ActivePanel::Scope,
 			filetree_panel: ActivePanel::FileTree,
 			pending_panel: ActivePanel::Pending,
+			changelist_panel: ActivePanel::ChangeList,
+			detail_panel: ActivePanel::Detail,
 			log_panel: ActivePanel::Log,
 			input: ActivePanel::Input,
 			confirm: ActivePanel::Confirm,
 		})
+	}
+
+	pub fn cl_move_down(&mut self) {
+		let count = self.get_cl_selectable_count();
+		if count > 0 && self.cl_cursor < count - 1 {
+			self.cl_cursor += 1;
+		}
+	}
+
+	pub fn cl_move_up(&mut self) {
+		if self.cl_cursor > 0 {
+			self.cl_cursor -= 1;
+		}
+	}
+
+	pub fn cl_expand(&mut self) {
+		if let Some(target) = self.get_cl_target_at(self.cl_cursor) {
+			if let ClTarget::Id(id) = target {
+				if !self.expanded_ids.contains(&id) {
+					self.expanded_ids.insert(id.clone());
+					if let Some(cl) = self.changelists.iter_mut().find(|c| c.id == id) {
+						if cl.details.is_none() {
+							if let Ok(details) = fetch_changelist_detail(&id, &self.client_root) {
+								cl.details = Some(details);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	pub fn cl_collapse(&mut self) {
+		if let Some(target) = self.get_cl_target_at(self.cl_cursor) {
+			let id_to_remove = match target {
+				ClTarget::Id(id) => Some(id),
+				ClTarget::File(id, _) => Some(id),
+			};
+
+			if let Some(id) = id_to_remove {
+				if self.expanded_ids.contains(&id) {
+					self.expanded_ids.remove(&id);
+					// 收起后，如果光标在文件上，需要将光标移回对应的 ID 行
+					self.sync_cl_cursor_after_collapse(&id);
+				}
+			}
+		}
+	}
+
+	fn get_cl_selectable_count(&self) -> usize {
+		let mut count = 0;
+		for cl in &self.changelists {
+			count += 1; // ID 行
+			if self.expanded_ids.contains(&cl.id) {
+				if let Some(details) = &cl.details {
+					count += details.files.len(); // 文件行
+				}
+			}
+		}
+		count
+	}
+
+	pub fn get_cl_target_at(&self, idx: usize) -> Option<ClTarget> {
+		let mut current = 0;
+		for cl in &self.changelists {
+			if current == idx {
+				return Some(ClTarget::Id(cl.id.clone()));
+			}
+			current += 1;
+			if self.expanded_ids.contains(&cl.id) {
+				if let Some(details) = &cl.details {
+					if idx < current + details.files.len() {
+						return Some(ClTarget::File(cl.id.clone(), idx - current));
+					}
+					current += details.files.len();
+				}
+			}
+		}
+		None
+	}
+
+	fn sync_cl_cursor_after_collapse(&mut self, collapsed_id: &str) {
+		let mut current_selectable_idx = 0;
+		for cl in &self.changelists {
+			if cl.id == collapsed_id {
+				self.cl_cursor = current_selectable_idx;
+				return;
+			}
+			current_selectable_idx += 1;
+			if self.expanded_ids.contains(&cl.id) {
+				if let Some(details) = &cl.details {
+					current_selectable_idx += details.files.len();
+				}
+			}
+		}
 	}
 
 	fn detect_p4_root() -> Result<PathBuf, String> {
@@ -72,4 +184,9 @@ impl Core {
 
 		Err("Could not find 'Client root' in p4 info output. Are you logged in?".to_string())
 	}
+}
+
+pub enum ClTarget {
+	Id(String),
+	File(String, usize), // cl_id, file_index
 }

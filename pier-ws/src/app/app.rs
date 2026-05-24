@@ -88,8 +88,9 @@ impl App {
 							(KeyCode::Char('1'), _) => self.core.active_panel = ActivePanel::Scope,
 							(KeyCode::Char('2'), _) => self.core.active_panel = ActivePanel::FileTree,
 							(KeyCode::Char('3'), _) => self.core.active_panel = ActivePanel::Pending,
-							(KeyCode::Char('4'), _) => self.core.active_panel = ActivePanel::Detail,
-							(KeyCode::Char('5'), _) => self.core.active_panel = ActivePanel::Log,
+							(KeyCode::Char('4'), _) => self.core.active_panel = ActivePanel::ChangeList,
+							(KeyCode::Tab, _)       => self.core.active_panel = ActivePanel::Detail,
+							(KeyCode::Char('@'), _) => self.core.active_panel = ActivePanel::Log,
 							
 							// FileTree 导航按键
 							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::FileTree => {
@@ -103,6 +104,20 @@ impl App {
 							}
 							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::FileTree => {
 								self.core.filetree.leave_dir();
+							}
+
+							// ChangeList 导航按键
+							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::ChangeList => {
+								self.core.cl_move_down();
+							}
+							(KeyCode::Char('k'), _) if self.core.active_panel == ActivePanel::ChangeList => {
+								self.core.cl_move_up();
+							}
+							(KeyCode::Char('l') | KeyCode::Enter, _) if self.core.active_panel == ActivePanel::ChangeList => {
+								self.core.cl_expand();
+							}
+							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::ChangeList => {
+								self.core.cl_collapse();
 							}
 							_ => {}
 						}

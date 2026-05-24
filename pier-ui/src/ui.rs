@@ -46,11 +46,16 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 
 	let left_chunks = Layout::default()
 		.direction(Direction::Vertical)
-		.constraints([scope_constraint, Constraint::Min(0)])
+		.constraints([
+			scope_constraint,
+			Constraint::Percentage(70),
+			Constraint::Min(3),
+		])
 		.split(left_area);
 
 	let scope_area = left_chunks[0];
 	let filetree_area = left_chunks[1];
+	let pending_area = left_chunks[2];
 
 	let right_chunks = Layout::default()
 		.direction(Direction::Vertical)
@@ -61,7 +66,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 		])
 		.split(right_area);
 
-	let pending_area = right_chunks[0];
+	let changelist_area = right_chunks[0];
 	let detail_area = right_chunks[1];
 	let log_area = right_chunks[2];
 
@@ -144,10 +149,111 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 	f.render_stateful_widget(parent_list, ft_chunks[0], &mut parent_list_state);
 	f.render_stateful_widget(current_list, ft_chunks[1], &mut current_list_state);
 
-	// Right Panels
 	f.render_widget(get_block("[3] Pending ", ActivePanel::Pending), pending_area);
-	f.render_widget(get_block("[4] Detail ", ActivePanel::Detail), detail_area);
-	f.render_widget(get_block("[5] Log ", ActivePanel::Log), log_area);
+
+	// Right Panels
+	let cl_block = get_block("[4] ChangeList ", ActivePanel::ChangeList);
+	let mut cl_items: Vec<ListItem> = Vec::new();
+	let mut current_ui_index = 0;
+	let mut selectable_index = 0;
+	let mut selected_ui_index = 0;
+
+	// 计算可用宽度：
+	// 总宽度 - 左右边框(2) - 前缀符号位(2) = area.width - 4
+	let content_width = (changelist_area.width as usize).saturating_sub(4);
+
+	for (i, cl) in core.changelists.iter().enumerate() {
+		let is_expanded = core.expanded_ids.contains(&cl.id);
+		let is_head = i == 0;
+		let is_selected = core.cl_cursor == selectable_index;
+		
+		// 1. 确定前缀符号 (2 字符)
+		let symbol = if is_selected {
+			if is_head { "󰌕 " } else { "> " }
+		} else {
+			if is_head { "󰌕 " } else { "  " }
+		};
+
+		// 2. ID 行内容格式化
+		let id_str = &cl.id;
+		let author_str = format!("  {}", cl.author);
+		let time_str = &cl.time;
+		
+		let id_len = id_str.len();
+		let author_len = author_str.len();
+		let time_len = time_str.len();
+		
+		let padding = content_width.saturating_sub(id_len).saturating_sub(author_len).saturating_sub(time_len);
+		let base_line = format!("{}{}{}{}", id_str, author_str, " ".repeat(padding), time_str);
+		
+		cl_items.push(ListItem::new(format!("{}{}", symbol, base_line)));
+		if is_selected {
+			selected_ui_index = current_ui_index;
+		}
+		current_ui_index += 1;
+		selectable_index += 1;
+
+		if is_expanded {
+			if let Some(details) = &cl.details {
+				// 额外信息缩进 3 空格 (相对于 ID 行起始)
+				// 前缀符号 2 + 缩进 3 = 5
+				let detail_prefix = "     "; 
+				let detail_content_width = content_width.saturating_sub(3);
+
+				// 1. Submit 信息
+				for desc_line in &details.full_description {
+					cl_items.push(ListItem::new(format!("{}{}", detail_prefix, desc_line)).style(Style::default().fg(Color::Gray)));
+					current_ui_index += 1;
+				}
+
+				// 2. 分割线
+				let separator = "─".repeat(detail_content_width);
+				cl_items.push(ListItem::new(format!("{}{}", detail_prefix, separator)).style(Style::default().fg(Color::DarkGray)));
+				current_ui_index += 1;
+
+				// 3. 文件列表
+				for (_f_idx, file) in details.files.iter().enumerate() {
+					let is_file_selected = core.cl_cursor == selectable_index;
+					let file_symbol = if is_selected && is_file_selected { "> " } else { "  " };
+					
+					// 文件行的缩进逻辑：前缀(2) + 缩进(3) = 5
+					let file_prefix_str = format!("{}   ", file_symbol);
+					let file_info = format!("{} | {} | ", file.revision, file.action);
+					
+					let display_path = file.path.replacen("//depot", "...", 1);
+					let file_info_len = file_info.chars().count();
+					
+					let avail_path_width = detail_content_width.saturating_sub(file_info_len);
+					let path_len = display_path.chars().count();
+					
+					let file_line = if path_len <= avail_path_width {
+						let path_padding = avail_path_width.saturating_sub(path_len);
+						format!("{}{}{}{}", file_prefix_str, file_info, " ".repeat(path_padding), display_path)
+					} else {
+						format!("{}{}{}", file_prefix_str, file_info, display_path)
+					};
+
+					cl_items.push(ListItem::new(file_line));
+					if is_file_selected {
+						selected_ui_index = current_ui_index;
+					}
+					current_ui_index += 1;
+					selectable_index += 1;
+				}
+			}
+		}
+	}
+
+	let cl_list = List::new(cl_items)
+		.highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD));
+
+	let mut cl_list_state = ratatui::widgets::ListState::default();
+	cl_list_state.select(Some(selected_ui_index));
+
+	f.render_stateful_widget(cl_list.block(cl_block), changelist_area, &mut cl_list_state);
+
+	f.render_widget(get_block("[Tab] Detail ", ActivePanel::Detail), detail_area);
+	f.render_widget(get_block("[@] Log ", ActivePanel::Log), log_area);
 
 	// Footer
 	let footer_text = format!(" [Q] Quit | [1-5] Switch Panel | Path: {}", core.filetree.current_path.display());
