@@ -255,11 +255,12 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 		.style(Style::default().fg(Color::DarkGray));
 	f.render_widget(footer, footer_area);
 }
-
 fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
 	let block = get_block("[Tab] Detail ", ActivePanel::Detail, core.active_panel);
 	let inner = block.inner(area);
 	f.render_widget(block, area);
+
+	let is_dt_active = core.active_panel == ActivePanel::Detail;
 
 	if let Some(detail) = &core.current_detail {
 		let labels = [
@@ -272,11 +273,20 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
 		];
 
 		let mut items = Vec::new();
-		let content_width = (inner.width as usize).saturating_sub(2); // 减去左右内边距
+		let content_width = (inner.width as usize).saturating_sub(4); // 减去 2(cursor) + 2(border)
 
-		for (label, value) in labels.iter().zip(values.iter()) {
+		for (i, (label, value)) in labels.iter().zip(values.iter()).enumerate() {
+			let is_selected = is_dt_active && core.detail_cursor == i;
+			let symbol = if is_selected { "> " } else { "  " };
+			
 			let padding = content_width.saturating_sub(label.len()).saturating_sub(value.len());
-			items.push(ListItem::new(format!("{} {}{}", label, " ".repeat(padding), value)));
+			let line = format!("{}{} {}{}", symbol, label, " ".repeat(padding), value);
+			let mut list_item = ListItem::new(line);
+			
+			if is_selected {
+				list_item = list_item.style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD));
+			}
+			items.push(list_item);
 		}
 
 		let list = List::new(items);

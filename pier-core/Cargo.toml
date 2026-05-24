@@ -16,4 +16,6 @@ ratatui     = { workspace = true }
 dirs        = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
+arboard     = { workspace = true }
+chrono      = "0.4.39"
 

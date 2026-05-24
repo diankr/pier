@@ -1,6 +1,7 @@
 use std::{
 	io::{self, Stdout},
 	time::Duration,
+	path::PathBuf,
 };
 
 use anyhow::Result;
@@ -24,6 +25,8 @@ pub(crate) struct App {
 	pub(crate) term: Term,
 	pub(crate) state: UiState,
 	pub(crate) should_quit: bool,
+	detail_tx: tokio::sync::mpsc::UnboundedSender<PathBuf>,
+	detail_rx: tokio::sync::mpsc::UnboundedReceiver<Result<pier_core::detail::FileDetail, String>>,
 }
 
 impl App {
@@ -31,11 +34,25 @@ impl App {
 		let core = Core::new().map_err(|e| anyhow::anyhow!(e))?;
 		let backend = CrosstermBackend::new(io::stdout());
 		let term = Terminal::new(backend)?;
+
+		let (request_tx, mut request_rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
+		let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel::<Result<pier_core::detail::FileDetail, String>>();
+
+		// Background worker
+		tokio::spawn(async move {
+			while let Some(path) = request_rx.recv().await {
+				let result = pier_core::detail::fetch_file_detail(&path);
+				let _ = result_tx.send(result);
+			}
+		});
+
 		Ok(Self {
 			core,
 			term,
 			state: UiState::new(),
 			should_quit: false,
+			detail_tx: request_tx,
+			detail_rx: result_rx,
 		})
 	}
 
@@ -64,9 +81,26 @@ impl App {
 	}
 
 	async fn run(&mut self) -> Result<()> {
+		// 初始触发一次
+		self.trigger_detail_update();
+
 		loop {
 			if self.should_quit {
 				break;
+			}
+
+			// 检查是否有异步结果返回
+			while let Ok(result) = self.detail_rx.try_recv() {
+				match result {
+					Ok(detail) => {
+						self.core.current_detail = Some(detail);
+						self.core.detail_error = None;
+					}
+					Err(e) => {
+						self.core.current_detail = None;
+						self.core.detail_error = Some(e);
+					}
+				}
 			}
 
 			self.term.draw(|f| {
@@ -94,16 +128,20 @@ impl App {
 							
 							// FileTree 导航按键
 							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::FileTree => {
-								self.core.filetree.move_down();
+								self.core.ft_move_down();
+								self.trigger_detail_update();
 							}
 							(KeyCode::Char('k'), _) if self.core.active_panel == ActivePanel::FileTree => {
-								self.core.filetree.move_up();
+								self.core.ft_move_up();
+								self.trigger_detail_update();
 							}
 							(KeyCode::Char('l'), _) if self.core.active_panel == ActivePanel::FileTree => {
-								self.core.filetree.enter_dir();
+								self.core.ft_enter_dir();
+								self.trigger_detail_update();
 							}
 							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::FileTree => {
-								self.core.filetree.leave_dir();
+								self.core.ft_leave_dir();
+								self.trigger_detail_update();
 							}
 
 							// ChangeList 导航按键
@@ -119,6 +157,17 @@ impl App {
 							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::ChangeList => {
 								self.core.cl_collapse();
 							}
+
+							// Detail 导航与复制按键
+							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::Detail => {
+								self.core.dt_move_down();
+							}
+							(KeyCode::Char('k'), _) if self.core.active_panel == ActivePanel::Detail => {
+								self.core.dt_move_up();
+							}
+							(KeyCode::Char('Y'), _) if self.core.active_panel == ActivePanel::Detail => {
+								self.core.dt_copy_selected();
+							}
 							_ => {}
 						}
 					}
@@ -128,5 +177,11 @@ impl App {
 			sleep(Duration::from_millis(10)).await;
 		}
 		Ok(())
+	}
+
+	fn trigger_detail_update(&mut self) {
+		if let Some(file) = self.core.filetree.files.get(self.core.filetree.selected) {
+			let _ = self.detail_tx.send(file.path.clone());
+		}
 	}
 }

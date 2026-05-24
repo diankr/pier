@@ -29,6 +29,7 @@ pub struct Core {
 
 	pub current_detail: Option<FileDetail>,
 	pub detail_error: Option<String>,
+	pub detail_cursor: usize,
 
 	pub scope_panel: ActivePanel,
 	pub filetree_panel: ActivePanel,
@@ -61,6 +62,7 @@ impl Core {
 
 			current_detail: None,
 			detail_error: None,
+			detail_cursor: 0,
 
 			scope_panel: ActivePanel::Scope,
 			filetree_panel: ActivePanel::FileTree,
@@ -111,6 +113,30 @@ impl Core {
 	pub fn ft_leave_dir(&mut self) {
 		self.filetree.leave_dir();
 		self.update_detail();
+	}
+
+	pub fn dt_move_down(&mut self) {
+		if self.current_detail.is_some() && self.detail_cursor < 8 {
+			self.detail_cursor += 1;
+		}
+	}
+
+	pub fn dt_move_up(&mut self) {
+		if self.detail_cursor > 0 {
+			self.detail_cursor -= 1;
+		}
+	}
+
+	pub fn dt_copy_selected(&self) {
+		if let Some(detail) = &self.current_detail {
+			let values = [
+				&detail.filename, &detail.filesize, &detail.depot_path, &detail.revision,
+				&detail.date_modified, &detail.changelist, &detail.action, &detail.latest_user, &detail.checkout_by
+			];
+			if let Some(val) = values.get(self.detail_cursor) {
+				let _ = crate::detail::copy_to_clipboard(val);
+			}
+		}
 	}
 
 	pub fn cl_move_down(&mut self) {
