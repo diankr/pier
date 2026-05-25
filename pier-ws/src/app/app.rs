@@ -40,7 +40,22 @@ impl App {
 
 		// Background worker
 		tokio::spawn(async move {
+			let mut last_path = None;
 			while let Some(path) = request_rx.recv().await {
+				// 简单的防抖：如果路径没变，且已经有结果了，可以跳过（虽然外层有逻辑处理，这里再加一层保护）
+				if Some(&path) == last_path.as_ref() {
+					// continue; 
+				}
+				last_path = Some(path.clone());
+				
+				// 延迟一小会儿，如果期间有新请求进来，这个请求可以被视为过时
+				tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+				
+				// 再次检查是否有新的请求在排队，如果有，说明当前请求已经过时
+				if request_rx.len() > 0 {
+					continue;
+				}
+
 				let result = pier_core::detail::fetch_file_detail(&path);
 				let _ = result_tx.send(result);
 			}
@@ -181,6 +196,11 @@ impl App {
 
 	fn trigger_detail_update(&mut self) {
 		if let Some(file) = self.core.filetree.files.get(self.core.filetree.selected) {
+			// 如果有缓存，立即更新 UI 以消除延迟感
+			if let Some(cached) = pier_core::detail::load_from_cache(&file.path) {
+				self.core.current_detail = Some(cached);
+				self.core.detail_error = None;
+			}
 			let _ = self.detail_tx.send(file.path.clone());
 		}
 	}
