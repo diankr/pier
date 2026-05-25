@@ -1,11 +1,21 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum FileP4Status {
+	None,
+	Add,
+	Edit,
+	Delete,
+	Untracked,
+}
+
 #[derive(Clone, Debug)]
 pub struct FileItem {
 	pub name: String,
 	pub path: PathBuf,
 	pub is_dir: bool,
+	pub p4_status: FileP4Status,
 }
 
 pub struct FileTree {
@@ -54,6 +64,7 @@ impl FileTree {
 					name,
 					is_dir: path.is_dir(),
 					path,
+					p4_status: FileP4Status::None,
 				});
 			}
 		}

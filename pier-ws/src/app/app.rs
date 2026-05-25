@@ -141,7 +141,7 @@ impl App {
 							(KeyCode::Tab, _)       => self.core.active_panel = ActivePanel::Detail,
 							(KeyCode::Char('@'), _) => self.core.active_panel = ActivePanel::Log,
 							
-							// FileTree 导航按键
+							// FileTree 导航与 P4 操作
 							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::FileTree => {
 								self.core.ft_move_down();
 								self.trigger_detail_update();
@@ -157,6 +157,35 @@ impl App {
 							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::FileTree => {
 								self.core.ft_leave_dir();
 								self.trigger_detail_update();
+							}
+							(KeyCode::Char('c'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.ft_p4_edit();
+							}
+							(KeyCode::Char('d'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.ft_p4_delete();
+							}
+							(KeyCode::Char('r'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.ft_p4_revert();
+							}
+							(KeyCode::Char('a'), _) if self.core.active_panel == ActivePanel::FileTree => {
+								self.core.ft_p4_add();
+							}
+
+							// Pending 导航与操作
+							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::Pending => {
+								self.core.pd_move_down();
+							}
+							(KeyCode::Char('k'), _) if self.core.active_panel == ActivePanel::Pending => {
+								self.core.pd_move_up();
+							}
+							(KeyCode::Char('l'), _) if self.core.active_panel == ActivePanel::Pending => {
+								self.core.pd_expand();
+							}
+							(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::Pending => {
+								self.core.pd_collapse();
+							}
+							(KeyCode::Char('r'), _) if self.core.active_panel == ActivePanel::Pending => {
+								self.core.pd_p4_revert();
 							}
 
 							// ChangeList 导航按键
@@ -182,6 +211,14 @@ impl App {
 							}
 							(KeyCode::Char('Y'), _) if self.core.active_panel == ActivePanel::Detail => {
 								self.core.dt_copy_selected();
+							}
+
+							// Log 导航按键
+							(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::Log => {
+								self.core.log_move_down();
+							}
+							(KeyCode::Char('k'), _) if self.core.active_panel == ActivePanel::Log => {
+								self.core.log_move_up();
 							}
 							_ => {}
 						}
