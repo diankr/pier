@@ -39,6 +39,8 @@ pub struct Selection {
   pub cursor_bg: Color,
   #[serde(deserialize_with = "deserialize_color")]
   pub cursor_fg: Color,
+  #[serde(deserialize_with = "deserialize_color")]
+  pub cursor_inactive: Color,
 }
 
 impl Default for Selection {
@@ -46,6 +48,7 @@ impl Default for Selection {
     Self {
       cursor_bg: hex_to_color("#FBBD2F"),
       cursor_fg: hex_to_color("#15181D"),
+      cursor_inactive: hex_to_color("#B7B947"),
     }
   }
 }

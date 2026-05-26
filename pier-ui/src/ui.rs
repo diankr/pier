@@ -194,7 +194,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   let highlight_style = if is_cl_active {
     Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
   } else {
-    Style::default().add_modifier(Modifier::UNDERLINED).fg(theme().component.default_text)
+    Style::default().add_modifier(Modifier::UNDERLINED)
   };
 
   let cl_list = List::new(cl_items).highlight_style(highlight_style).style(Style::default().fg(theme().component.default_text));
@@ -219,10 +219,16 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
   let ft_inner_area = ft_block.inner(area);
   f.render_widget(ft_block, area);
 
+  // 增加左右 padding 确保 highlight 不贴边
+  let ft_padded_area = Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+    .split(ft_inner_area)[1];
+
   let ft_chunks = Layout::default()
     .direction(Direction::Horizontal)
     .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-    .split(ft_inner_area);
+    .split(ft_padded_area);
   
   let parent_items: Vec<ListItem> = core.filetree.parent_files.iter().map(|file| {
     ListItem::new(format!(" {} ", file.name))
@@ -236,17 +242,31 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
       _ if file.is_dir => (" ", theme().component.default_text),
       _ => (" ", theme().component.default_text),
     };
-    ListItem::new(format!("{}{}", prefix, file.name)).style(Style::default().fg(color))
+    ListItem::new(format!(" {} {} ", prefix, file.name)).style(Style::default().fg(color))
   }).collect();
+
+  let is_ft_active = core.active_panel == ActivePanel::FileTree;
+
+  let parent_highlight_style = if is_ft_active {
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
+  } else {
+    Style::default().add_modifier(Modifier::UNDERLINED)
+  };
 
   let parent_list = List::new(parent_items)
     .style(Style::default().fg(theme().component.default_text))
-    .highlight_style(Style::default().add_modifier(Modifier::DIM))
+    .highlight_style(parent_highlight_style)
     .highlight_symbol("");
+
+  let current_highlight_style = if is_ft_active {
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
+  } else {
+    Style::default().add_modifier(Modifier::UNDERLINED)
+  };
 
   let current_list = List::new(current_items)
     .style(Style::default().fg(theme().component.default_text))
-    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD))
+    .highlight_style(current_highlight_style)
     .highlight_symbol("> ");
 
   let mut parent_list_state = ratatui::widgets::ListState::default();
@@ -264,25 +284,35 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
   let inner = block.inner(area);
   f.render_widget(block, area);
 
+  // 增加左右 padding
+  let padded_inner = Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+    .split(inner)[1];
+
   let mut items = Vec::new();
   let is_pd_active = core.active_panel == ActivePanel::Pending;
   
   // Default Changelist Header
   let header_symbol = if is_pd_active && core.pending_cursor == 0 { "> " } else { "  " };
   let expand_symbol = if core.is_pending_expanded { "󰅖 " } else { "󰅀 " };
-  let header_text = format!("{}{} Default ", header_symbol, expand_symbol);
-  let mut header_item = ListItem::new(header_text).style(Style::default().fg(theme().component.default_text));
-  if is_pd_active && core.pending_cursor == 0 {
-    header_item = header_item.style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
-  }
-  items.push(header_item);
+  let header_text = format!(" {}{} Default ", header_symbol, expand_symbol);
+  let header_style = if is_pd_active && core.pending_cursor == 0 {
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
+  } else if !is_pd_active && core.pending_cursor == 0 {
+    Style::default().add_modifier(Modifier::UNDERLINED)
+  } else {
+    Style::default().fg(theme().component.default_text)
+  };
+  
+  items.push(ListItem::new(header_text).style(header_style));
 
   // Files
   if core.is_pending_expanded {
     for (i, file) in core.pending_files.iter().enumerate() {
       let cursor_idx = i + 1;
-      let is_selected = is_pd_active && core.pending_cursor == cursor_idx;
-      let symbol = if is_selected { "> " } else { "  " };
+      let is_selected = core.pending_cursor == cursor_idx;
+      let symbol = if is_pd_active && is_selected { "> " } else { "  " };
       
       let (icon, color) = match file.action.as_str() {
         "add" => ("󱓡 ", theme().p4.add),
@@ -291,18 +321,60 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
         _ => (" ", theme().component.default_text),
       };
       
-      let display_path = file.path.replacen("//depot", "...", 1);
-      let line = format!("{}      {}{} {}", symbol, icon, display_path, file.revision);
-      let mut item = ListItem::new(line).style(Style::default().fg(color));
-      if is_selected {
-        item = item.style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+      let filename = std::path::Path::new(&file.path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| file.path.clone());
+      
+      let parent_path = std::path::Path::new(&file.path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+      let display_path = parent_path.replacen("//depot", "...", 1);
+      
+      // 增加缩进，恢复层级感
+      let left_content = format!("   {}{} {} ", symbol, icon, filename);
+      let right_content = format!("{}  {}/ ", file.revision, display_path);
+      
+      let left_len = left_content.chars().count();
+      let right_len = right_content.chars().count();
+      let total_width = padded_inner.width as usize;
+      
+      let mut line_spans = vec![
+        ratatui::text::Span::styled(left_content, Style::default().fg(color))
+      ];
+      
+      if total_width > left_len {
+        let avail_right = total_width.saturating_sub(left_len);
+        let final_right = if right_len > avail_right {
+          format!("{}...", &right_content[..avail_right.saturating_sub(3)])
+        } else {
+          let padding = avail_right.saturating_sub(right_len);
+          format!("{}{}", " ".repeat(padding), right_content)
+        };
+        line_spans.push(ratatui::text::Span::styled(final_right, Style::default().fg(theme().component.pane_border)));
       }
-      items.push(item);
+      
+      items.push(ListItem::new(ratatui::text::Line::from(line_spans)));
     }
   }
 
-  let list = List::new(items).style(Style::default().fg(theme().component.default_text));
-  f.render_widget(list, inner);
+  let list = List::new(items)
+    .style(Style::default().fg(theme().component.default_text));
+  
+  // 处理选中状态的逻辑移到渲染这里
+  let mut state = ratatui::widgets::ListState::default();
+  state.select(Some(core.pending_cursor));
+
+  let highlight_style = if is_pd_active {
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
+  } else if core.pending_cursor != usize::MAX {
+    Style::default().add_modifier(Modifier::UNDERLINED)
+  } else {
+    Style::default()
+  };
+
+  f.render_stateful_widget(list.highlight_style(highlight_style), padded_inner, &mut state);
 }
 
 fn render_log(f: &mut Frame, area: Rect, core: &Core) {
@@ -355,17 +427,26 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
   let is_dt_active = core.active_panel == ActivePanel::Detail;
 
   if let Some(detail) = &core.current_detail {
+    let mut items = Vec::new();
+    let content_width = (inner.width as usize).saturating_sub(4);
+
+    // [CheckoutBy] Header if not empty
+    if !detail.checkout_by.trim().is_empty() {
+      let checkout_line = format!("  CheckoutBy: {}", detail.checkout_by);
+      items.push(ListItem::new(checkout_line).style(Style::default().fg(theme().p4.edit).add_modifier(Modifier::BOLD)));
+      
+      let separator = "─".repeat(content_width);
+      items.push(ListItem::new(format!("  {}", separator)).style(Style::default().fg(theme().component.pane_border)));
+    }
+
     let labels = [
       "FileName", "FileSize", "DepotPath", "Revision", 
-      "DateModified", "ChangeList", "Action", "LatestUser", "CheckoutBy"
+      "DateModified", "ChangeList", "Action", "LatestUser"
     ];
     let values = [
       &detail.filename, &detail.filesize, &detail.depot_path, &detail.revision,
-      &detail.date_modified, &detail.changelist, &detail.action, &detail.latest_user, &detail.checkout_by
+      &detail.date_modified, &detail.changelist, &detail.action, &detail.latest_user
     ];
-
-    let mut items = Vec::new();
-    let content_width = (inner.width as usize).saturating_sub(4); 
 
     for (i, (label, value)) in labels.iter().zip(values.iter()).enumerate() {
       let is_selected = is_dt_active && core.detail_cursor == i;
@@ -414,8 +495,13 @@ fn get_block(title: &'static str, panel: ActivePanel, active_panel: ActivePanel)
   } else {
     Style::default().fg(theme().component.pane_border)
   };
+  
+  // 左侧用横线填充，右侧保持空出一个字符的空隙
+  let padded_title = format!("─{} ", title);
+  
   Block::default()
-    .title(title)
+    .title(padded_title)
     .borders(Borders::ALL)
+    .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(style)
 }

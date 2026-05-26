@@ -18,6 +18,7 @@ pub enum ActivePanel {
   Confirm,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct LogItem {
   pub time: String,
   pub command: String,
@@ -60,6 +61,8 @@ impl Core {
     let client_root = Self::detect_p4_root()?;
     let _ = env::set_current_dir(&client_root);
     let changelists = fetch_changelists(&client_root)?;
+    let logs = Self::load_logs();
+    let log_cursor = logs.len().saturating_sub(1);
 
     let mut core = Self {
       active_panel: ActivePanel::FileTree,
@@ -71,8 +74,8 @@ impl Core {
       current_detail: None,
       detail_error: None,
       detail_cursor: 0,
-      logs: Vec::new(),
-      log_cursor: 0,
+      logs,
+      log_cursor,
       pending_files: Vec::new(),
       is_pending_expanded: true,
       pending_cursor: 0,
@@ -212,7 +215,33 @@ impl Core {
       command: command.to_string(),
       output: output.to_string(),
     });
+    
+    // 保留最大100条
+    if self.logs.len() > 100 {
+      self.logs.remove(0);
+    }
+    
     self.log_cursor = self.logs.len().saturating_sub(1);
+    self.save_logs();
+  }
+
+  fn load_logs() -> Vec<LogItem> {
+    dirs::cache_dir()
+      .map(|d| d.join("pier/logs.json"))
+      .and_then(|p| std::fs::read_to_string(p).ok())
+      .and_then(|s| serde_json::from_str(&s).ok())
+      .unwrap_or_default()
+  }
+
+  fn save_logs(&self) {
+    if let Some(path) = dirs::cache_dir().map(|d| d.join("pier/logs.json")) {
+      if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+      }
+      if let Ok(json) = serde_json::to_string(&self.logs) {
+        let _ = std::fs::write(path, json);
+      }
+    }
   }
 
   pub fn ft_p4_edit(&mut self) {
