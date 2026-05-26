@@ -1,8 +1,9 @@
-use pier_core::core::{ActivePanel, Core, LogItem};
+use pier_config::theme;
+use pier_core::core::{ActivePanel, Core};
 use pier_core::filetree::FileP4Status;
 use ratatui::{
   layout::{Constraint, Direction, Layout, Rect},
-  style::{Color, Modifier, Style},
+  style::{Modifier, Style},
   widgets::{Block, Borders, List, ListItem, Paragraph},
   Frame,
 };
@@ -98,7 +99,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     "".to_string()
   };
 
-  f.render_widget(Paragraph::new(display_text).block(scope_block), scope_area);
+  f.render_widget(Paragraph::new(display_text).block(scope_block).style(Style::default().fg(theme().component.default_text)), scope_area);
   
   // FileTree
   render_filetree(f, filetree_area, core);
@@ -151,12 +152,12 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
         let detail_content_width = content_width.saturating_sub(3);
 
         for desc_line in &details.full_description {
-          cl_items.push(ListItem::new(format!("{}{}", detail_prefix, desc_line)).style(Style::default().fg(Color::Gray)));
+          cl_items.push(ListItem::new(format!("{}{}", detail_prefix, desc_line)).style(Style::default().fg(theme().component.pane_border)));
           current_ui_index += 1;
         }
 
         let separator = "─".repeat(detail_content_width);
-        cl_items.push(ListItem::new(format!("{}{}", detail_prefix, separator)).style(Style::default().fg(Color::DarkGray)));
+        cl_items.push(ListItem::new(format!("{}{}", detail_prefix, separator)).style(Style::default().fg(theme().component.pane_border)));
         current_ui_index += 1;
 
         for (_f_idx, file) in details.files.iter().enumerate() {
@@ -179,7 +180,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
             format!("{}{}{} ", file_prefix_str, file_info, display_path)
           };
 
-          cl_items.push(ListItem::new(file_line));
+          cl_items.push(ListItem::new(file_line).style(Style::default().fg(theme().component.default_text)));
           if is_file_selected {
             selected_ui_index = current_ui_index;
           }
@@ -191,12 +192,12 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   }
 
   let highlight_style = if is_cl_active {
-    Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD)
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
   } else {
-    Style::default().add_modifier(Modifier::UNDERLINED)
+    Style::default().add_modifier(Modifier::UNDERLINED).fg(theme().component.default_text)
   };
 
-  let cl_list = List::new(cl_items).highlight_style(highlight_style);
+  let cl_list = List::new(cl_items).highlight_style(highlight_style).style(Style::default().fg(theme().component.default_text));
 
   let mut cl_list_state = ratatui::widgets::ListState::default();
   cl_list_state.select(Some(selected_ui_index));
@@ -209,7 +210,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   // Footer
   let footer_text = format!(" [Q] Quit | [1-5] Switch Panel | Path: {}", core.filetree.current_path.display());
   let footer = Paragraph::new(footer_text)
-    .style(Style::default().fg(Color::DarkGray));
+    .style(Style::default().fg(theme().component.pane_border));
   f.render_widget(footer, footer_area);
 }
 
@@ -229,21 +230,23 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
   
   let current_items: Vec<ListItem> = core.filetree.files.iter().map(|file| {
     let (prefix, color) = match file.p4_status {
-      FileP4Status::Add => ("󱓡 ", Color::Green),
-      FileP4Status::Edit => ("󰐕 ", Color::Blue),
-      FileP4Status::Delete => ("󰩹 ", Color::Red),
-      _ if file.is_dir => (" ", Color::White),
-      _ => (" ", Color::White),
+      FileP4Status::Add => ("󱓡 ", theme().p4.add),
+      FileP4Status::Edit => ("󰐕 ", theme().p4.edit),
+      FileP4Status::Delete => ("󰩹 ", theme().p4.delete),
+      _ if file.is_dir => (" ", theme().component.default_text),
+      _ => (" ", theme().component.default_text),
     };
     ListItem::new(format!("{}{}", prefix, file.name)).style(Style::default().fg(color))
   }).collect();
 
   let parent_list = List::new(parent_items)
+    .style(Style::default().fg(theme().component.default_text))
     .highlight_style(Style::default().add_modifier(Modifier::DIM))
     .highlight_symbol("");
 
   let current_list = List::new(current_items)
-    .highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD))
+    .style(Style::default().fg(theme().component.default_text))
+    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD))
     .highlight_symbol("> ");
 
   let mut parent_list_state = ratatui::widgets::ListState::default();
@@ -268,9 +271,9 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
   let header_symbol = if is_pd_active && core.pending_cursor == 0 { "> " } else { "  " };
   let expand_symbol = if core.is_pending_expanded { "󰅖 " } else { "󰅀 " };
   let header_text = format!("{}{} Default ", header_symbol, expand_symbol);
-  let mut header_item = ListItem::new(header_text);
+  let mut header_item = ListItem::new(header_text).style(Style::default().fg(theme().component.default_text));
   if is_pd_active && core.pending_cursor == 0 {
-    header_item = header_item.style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD));
+    header_item = header_item.style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
   }
   items.push(header_item);
 
@@ -282,90 +285,64 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
       let symbol = if is_selected { "> " } else { "  " };
       
       let (icon, color) = match file.action.as_str() {
-        "add" => ("󱓡 ", Color::Green),
-        "edit" => ("󰐕 ", Color::Blue),
-        "delete" => ("󰩹 ", Color::Red),
-        _ => (" ", Color::White),
+        "add" => ("󱓡 ", theme().p4.add),
+        "edit" => ("󰐕 ", theme().p4.edit),
+        "delete" => ("󰩹 ", theme().p4.delete),
+        _ => (" ", theme().component.default_text),
       };
       
       let display_path = file.path.replacen("//depot", "...", 1);
       let line = format!("{}      {}{} {}", symbol, icon, display_path, file.revision);
       let mut item = ListItem::new(line).style(Style::default().fg(color));
       if is_selected {
-        item = item.style(Style::default().bg(Color::Blue).fg(color).add_modifier(Modifier::BOLD));
+        item = item.style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
       }
       items.push(item);
     }
   }
 
-  let list = List::new(items);
+  let list = List::new(items).style(Style::default().fg(theme().component.default_text));
   f.render_widget(list, inner);
 }
 
 fn render_log(f: &mut Frame, area: Rect, core: &Core) {
   let block = get_block("[@] Log ", ActivePanel::Log, core.active_panel);
-  let inner = block.inner(area);
   
   let is_log_active = core.active_panel == ActivePanel::Log;
-  let mut all_lines = Vec::new();
-  
-  for (i, log) in core.logs.iter().enumerate() {
-    let is_selected = is_log_active && core.log_cursor == i;
-    let header_style = if is_selected {
-      Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-    } else {
-      Style::default().fg(Color::DarkGray)
-    };
-    
-    // Line 1: Time
-    all_lines.push(ratatui::text::Line::from(vec![
-      ratatui::text::Span::styled(format!("[{}]", log.time), header_style)
-    ]));
-    
-    // Line 2: Command
-    all_lines.push(ratatui::text::Line::from(vec![
-      ratatui::text::Span::styled(format!("> {}", log.command), Style::default().fg(Color::White))
-    ]));
-    
-    // Following lines: Output (wrapped)
-    let p = Paragraph::new(log.output.as_str())
-      .wrap(ratatui::widgets::Wrap { trim: true });
-    
-    // 这种渲染方式在 List 中比较难处理自动换行，改用 Paragraph 渲染整个区域带滚动
-  }
 
   // 重新实现 Log 渲染，使用 Paragraph 以支持 Wrap 和滚动
   let mut log_content = Vec::new();
   for (i, log) in core.logs.iter().enumerate() {
     let is_selected = is_log_active && core.log_cursor == i;
     let header_style = if is_selected {
-      Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+      Style::default().fg(theme().component.active_pane_border).add_modifier(Modifier::BOLD)
     } else {
-      Style::default().fg(Color::DarkGray)
+      Style::default().fg(theme().component.pane_border)
     };
 
     log_content.push(ratatui::text::Line::from(vec![
       ratatui::text::Span::styled(format!("[{}]", log.time), header_style)
     ]));
     log_content.push(ratatui::text::Line::from(vec![
-      ratatui::text::Span::styled(format!("> {}", log.command), Style::default().fg(Color::White))
+      ratatui::text::Span::styled(format!("> {}", log.command), Style::default().fg(theme().component.default_text))
     ]));
     
     for line in log.output.lines() {
       log_content.push(ratatui::text::Line::from(vec![
-        ratatui::text::Span::styled(format!("  {}", line), Style::default().fg(Color::Gray))
+        ratatui::text::Span::styled(format!("  {}", line), Style::default().fg(theme().component.pane_border))
       ]));
     }
     log_content.push(ratatui::text::Line::from("")); // Spacer
   }
 
   let paragraph = Paragraph::new(log_content)
+    .style(Style::default().fg(theme().component.default_text))
     .block(block)
     .wrap(ratatui::widgets::Wrap { trim: true });
   
   // 这里简单的滚动逻辑：根据 log_cursor 粗略计算 scroll offset
   // 更精准的滚动需要计算换行后的行数，暂时简单处理
-  let scroll_offset = (core.log_cursor as u16 * 3); 
+  let scroll_offset = core.log_cursor as u16 * 3; 
   
   f.render_widget(paragraph.scroll((scroll_offset, 0)), area);
 }
@@ -399,7 +376,9 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
       let mut list_item = ListItem::new(line);
       
       if is_selected {
-        list_item = list_item.style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD));
+        list_item = list_item.style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+      } else {
+        list_item = list_item.style(Style::default().fg(theme().component.default_text));
       }
       items.push(list_item);
     }
@@ -413,7 +392,7 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
       err
     };
     let p = Paragraph::new(text)
-      .style(Style::default().fg(Color::DarkGray))
+      .style(Style::default().fg(theme().component.pane_border))
       .alignment(ratatui::layout::Alignment::Center);
     
     let vertical_chunks = Layout::default()
@@ -431,9 +410,9 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
 
 fn get_block(title: &'static str, panel: ActivePanel, active_panel: ActivePanel) -> Block<'static> {
   let style = if active_panel == panel {
-    Style::default().fg(Color::Yellow)
+    Style::default().fg(theme().component.active_pane_border)
   } else {
-    Style::default().fg(Color::DarkGray)
+    Style::default().fg(theme().component.pane_border)
   };
   Block::default()
     .title(title)

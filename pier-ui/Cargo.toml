@@ -8,8 +8,9 @@ description = "Pier UI Component"
 repository  = "https://github.com/DehKaine/pier"
 
 [dependencies]
-pier-core  = { path = "../pier-core" }
-pier-macro = { path = "../pier-macro" }
+pier-core   = { path = "../pier-core" }
+pier-macro  = { path = "../pier-macro" }
+pier-config = { path = "../pier-config" }
 
 # External dependencies
 crossterm   = { workspace = true }

@@ -1,7 +1,7 @@
 [workspace]
 resolver        = "2"
 # members = [ "pier-*"]
-members = [ "pier-ws", "pier-core", "pier-ui" ]
+members = [ "pier-ws", "pier-core", "pier-ui", "pier-config" ]
 # members = [ "pier-ws", "pier-cli" ]
 
 [profile.release]
@@ -21,7 +21,7 @@ crossterm     = { version = "0.29.0", features = ["event-stream"] }
 dirs   = "6.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ratatui       = "0.30"
+ratatui       = { version = "0.30", features = ["serde"] }
 tokio         = { version = "1.50.0", features = ["full"] }
 tokio-stream  = "0.1.18"
 toml          = { version = "0.9.5" }
