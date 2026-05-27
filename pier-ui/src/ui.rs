@@ -122,19 +122,15 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     let is_head = i == 0;
     let is_selected = core.cl_cursor == selectable_index;
     
-    let symbol = if is_selected && is_cl_active {
-      if is_head { &theme().icon.changelist_head } else { "> " }
-    } else {
-      if is_head { &theme().icon.changelist_head } else { "  " }
-    };
+    let symbol = if is_head { format!(" {}", theme().icon.changelist_head) } else { "  ".to_string() };
     
-    let symbol_span = if is_head {
-      ratatui::text::Span::styled(symbol, Style::default().fg(theme().p4.edit))
+    let icon_span = if is_head {
+      ratatui::text::Span::styled(symbol, Style::default())
     } else {
       ratatui::text::Span::from(symbol)
     };
 
-    let id_str = &cl.id;
+    let id_str = format!(" {} ", cl.id);
     let author_str = format!("  {}", cl.author);
     let time_str = &cl.time;
     
@@ -145,7 +141,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     let padding = content_width.saturating_sub(id_len).saturating_sub(author_len).saturating_sub(time_len);
     let base_line = format!("{}{}{}{} ", id_str, author_str, " ".repeat(padding), time_str);
     
-    cl_items.push(ListItem::new(ratatui::text::Line::from(vec![symbol_span, ratatui::text::Span::from(base_line)])));
+    cl_items.push(ListItem::new(ratatui::text::Line::from(vec![icon_span, ratatui::text::Span::from(base_line)])));
     if is_selected {
       selected_ui_index = current_ui_index;
     }
@@ -168,9 +164,8 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 
         for (_f_idx, file) in details.files.iter().enumerate() {
           let is_file_selected = core.cl_cursor == selectable_index;
-          let file_symbol = if is_cl_active && is_file_selected { "> " } else { "  " };
           
-          let file_prefix_str = format!("{}   ", file_symbol);
+          let file_prefix_str = "      ";
           let file_info = format!("{} | {} | ", file.revision, file.action);
           
           let display_path = file.path.replacen("//depot", "...", 1);
@@ -237,7 +232,11 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
 
   let ft_chunks = Layout::default()
     .direction(Direction::Horizontal)
-    .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+    .constraints([
+      Constraint::Percentage(30),
+      Constraint::Length(1), // 增加一个字符的间隔
+      Constraint::Percentage(70)
+    ])
     .split(ft_padded_area);
   
   let parent_items: Vec<ListItem> = core.filetree.parent_files.iter().map(|file| {
@@ -274,7 +273,25 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
         _ => (&theme().icon.own_edit, theme().component.default_text),
       }
     };
-    ListItem::new(format!(" {} {} ", icon, file.name)).style(Style::default().fg(color))
+    
+    // 如果未被高亮选中，在原本 ">" 的位置显示对应颜色的 1/2 宽实心块
+    let status_block = if is_selected {
+      "  " 
+    } else {
+      match file.p4_status {
+        FileP4Status::Add | FileP4Status::Edit | FileP4Status::Delete | FileP4Status::OtherCheckout => "▌ ",
+        _ => "  ",
+      }
+    };
+    
+    let block_style = if is_selected { Style::default() } else { Style::default().fg(color) };
+    
+    let line = ratatui::text::Line::from(vec![
+      ratatui::text::Span::styled(status_block, block_style),
+      ratatui::text::Span::styled(format!("{} {} ", icon, file.name), Style::default().fg(color))
+    ]);
+    
+    ListItem::new(line)
   }).collect();
 
   let is_ft_active = core.active_panel == ActivePanel::FileTree;
@@ -299,7 +316,7 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
   let current_list = List::new(current_items)
     .style(Style::default().fg(theme().component.default_text))
     .highlight_style(current_highlight_style)
-    .highlight_symbol("> ");
+    .highlight_symbol("");
 
   let mut parent_list_state = ratatui::widgets::ListState::default();
   parent_list_state.select(Some(core.filetree.parent_selected));
@@ -308,7 +325,7 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
   current_list_state.select(Some(core.filetree.selected));
 
   f.render_stateful_widget(parent_list, ft_chunks[0], &mut parent_list_state);
-  f.render_stateful_widget(current_list, ft_chunks[1], &mut current_list_state);
+  f.render_stateful_widget(current_list, ft_chunks[2], &mut current_list_state);
 }
 
 fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
@@ -326,11 +343,11 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
   let is_pd_active = core.active_panel == ActivePanel::Pending;
   
   // Default Changelist Header
-  let header_symbol = if is_pd_active && core.pending_cursor == 0 { "> " } else { "  " };
+  let toggle_symbol = if core.is_pending_expanded { "v" } else { ">" };
   
-  let header_icon_span = ratatui::text::Span::styled(&theme().icon.pending_default, Style::default().fg(theme().p4.edit));
+  let header_icon_span = ratatui::text::Span::styled(&theme().icon.pending_default, Style::default());
   let header_line = ratatui::text::Line::from(vec![
-    ratatui::text::Span::from(format!(" {} ", header_symbol)),
+    ratatui::text::Span::from(format!("{} ", toggle_symbol)),
     header_icon_span,
     ratatui::text::Span::from(" Default ")
   ]);
@@ -350,7 +367,7 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
     for (i, file) in core.pending_files.iter().enumerate() {
       let cursor_idx = i + 1;
       let is_selected = core.pending_cursor == cursor_idx;
-      let symbol = if is_pd_active && is_selected { "> " } else { "  " };
+      let symbol = if is_pd_active && is_selected { " " } else { " " };
       
       let (icon, color) = match file.action.as_str() {
         "add" => (&theme().icon.mark_add, theme().p4.add),
@@ -370,8 +387,8 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
         .unwrap_or_default();
       let display_path = parent_path.replacen("//depot", "...", 1);
       
-      // 增加缩进，恢复层级感
-      let left_content = format!("   {}{} {} ", symbol, icon, filename);
+      // 增加缩进，恢复层级感 (Indentation adjusted)
+      let left_content = format!("  {}{} {} ", symbol, icon, filename);
       let right_content = format!("{}  {}/ ", file.revision, display_path);
       
       let left_len = left_content.chars().count();
@@ -548,21 +565,13 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
   let overlay_area = centered_rect(70, 45, area);
   f.render_widget(ratatui::widgets::Clear, overlay_area);
   
-  let block = Block::default()
-    .title(" Submit Confirmation ")
-    .borders(Borders::ALL)
-    .border_set(ratatui::symbols::border::ROUNDED)
-    .border_style(Style::default().fg(theme().component.active_pane_border));
-  f.render_widget(block, overlay_area);
-  
-  let inner_area = overlay_area.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
   let chunks = Layout::default()
     .direction(Direction::Vertical)
     .constraints([
       Constraint::Length(3), // Description
       Constraint::Length(7), // File List (5 items + 2 borders)
     ])
-    .split(inner_area);
+    .split(overlay_area);
     
   // Description Block
   let desc_style = if core.submit_focus == SubmitFocus::Description {
@@ -570,8 +579,9 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
   } else {
     Style::default().fg(theme().component.pane_border)
   };
+  let desc_title = format!("─Description ({}) ", core.submit_description.len());
   let desc_block = Block::default()
-    .title(" Description ")
+    .title(desc_title)
     .borders(Borders::ALL)
     .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(desc_style);
@@ -586,18 +596,18 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
     Style::default().fg(theme().component.pane_border)
   };
   let list_block = Block::default()
-    .title(" Files to Submit ")
+    .title("─Files to Submit (tab to toggle view) ")
     .borders(Borders::ALL)
     .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(list_style);
     
-  let list_inner = list_block.inner(chunks[1]);
+  let list_inner = chunks[1].inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
   f.render_widget(list_block, chunks[1]);
   
   let mut items = Vec::new();
   for (i, file) in core.pending_files.iter().enumerate() {
     let is_selected = core.submit_cursor == i;
-    let symbol = if core.submit_focus == SubmitFocus::FileList && is_selected { "> " } else { "  " };
+    let symbol = " "; 
     
     let (icon, color) = match file.action.as_str() {
       "add" => (&theme().icon.mark_add, theme().p4.add),
@@ -617,7 +627,8 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
       .unwrap_or_default();
     let display_path = parent_path.replacen("//depot", "...", 1);
     
-    let left_content = format!("   {}{} {} ", symbol, icon, filename);
+    // 缩进朝左移一个字符
+    let left_content = format!("  {}{} {} ", symbol, icon, filename);
     let right_content = format!("{}  {}/ ", file.revision, display_path);
     
     let total_width = list_inner.width as usize;
@@ -647,7 +658,7 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
   let highlight_style = if core.submit_focus == SubmitFocus::FileList {
     Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
   } else {
-    Style::default().add_modifier(Modifier::UNDERLINED)
+    Style::default()
   };
   
   f.render_stateful_widget(list.highlight_style(highlight_style), list_inner, &mut list_state);
