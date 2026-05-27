@@ -25,6 +25,12 @@ pub struct LogItem {
   pub output: String,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum SubmitFocus {
+  Description,
+  FileList,
+}
+
 pub struct Core {
   pub active_panel: ActivePanel,
   pub filetree: FileTree,
@@ -44,6 +50,11 @@ pub struct Core {
   pub pending_files: Vec<ChangeListFile>,
   pub is_pending_expanded: bool,
   pub pending_cursor: usize,
+
+  pub is_submit_overlay_open: bool,
+  pub submit_description: String,
+  pub submit_cursor: usize,
+  pub submit_focus: SubmitFocus,
 
   pub scope_panel: ActivePanel,
   pub filetree_panel: ActivePanel,
@@ -79,6 +90,10 @@ impl Core {
       pending_files: Vec::new(),
       is_pending_expanded: true,
       pending_cursor: 0,
+      is_submit_overlay_open: false,
+      submit_description: String::new(),
+      submit_cursor: 0,
+      submit_focus: SubmitFocus::Description,
       scope_panel: ActivePanel::Scope,
       filetree_panel: ActivePanel::FileTree,
       pending_panel: ActivePanel::Pending,
@@ -555,6 +570,23 @@ impl Core {
       }
     }
     Err("Could not find 'Client root' in p4 info output. Are you logged in?".to_string())
+  }
+
+  pub fn p4_submit(&mut self) {
+    if self.submit_description.trim().is_empty() {
+      self.add_log("p4 submit", "Error: Description cannot be empty");
+      return;
+    }
+    let output = Command::new("p4")
+      .arg("submit")
+      .arg("-d")
+      .arg(&self.submit_description)
+      .output();
+    
+    self.handle_p4_output("p4 submit", output);
+    self.submit_description.clear();
+    self.is_submit_overlay_open = false;
+    self.refresh_all();
   }
 }
 

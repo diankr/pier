@@ -87,6 +87,8 @@ pub struct Icons {
   pub folder: String,
   pub folder_empty: String,
   pub folder_open: String,
+  pub changelist_head: String,
+  pub pending_default: String,
 }
 
 impl Default for Icons {
@@ -99,6 +101,8 @@ impl Default for Icons {
       folder: char_from_hex("f024b").to_string(),
       folder_empty: char_from_hex("f114").to_string(),
       folder_open: char_from_hex("f115").to_string(),
+      changelist_head: char_from_hex("f0315").to_string(),
+      pending_default: char_from_hex("f14b").to_string(),
     }
   }
 }
