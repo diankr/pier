@@ -586,6 +586,14 @@ impl Core {
     self.handle_p4_output("p4 submit", output);
     self.submit_description.clear();
     self.is_submit_overlay_open = false;
+    
+    // 同步刷新 Changelist
+    if let Ok(changelists) = fetch_changelists(&self.client_root) {
+      self.changelists = changelists;
+      self.cl_cursor = 0;
+      self.expanded_ids.clear();
+    }
+    
     self.refresh_all();
   }
 }

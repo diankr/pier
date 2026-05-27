@@ -145,9 +145,10 @@ impl App {
 					self.core.submit_cursor -= 1;
 				}
 			}
-			(KeyCode::Enter, _) if self.core.submit_focus == pier_core::core::SubmitFocus::FileList => {
+			(KeyCode::Enter, _) => {
 				self.core.p4_submit();
 			}
+
 			(KeyCode::Char(c), _) if self.core.submit_focus == pier_core::core::SubmitFocus::Description => {
 				self.core.submit_description.push(c);
 			}

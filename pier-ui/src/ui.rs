@@ -250,8 +250,34 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   render_log(f, log_area, core);
 
   // Footer
-  let footer_text = format!(" [Q] Quit | [1-5] Switch Panel | Path: {}", core.filetree.current_path.display());
-  let footer = Paragraph::new(footer_text)
+  let left_hints = match core.active_panel {
+    ActivePanel::Scope      => "[Enter] p4 info",
+    ActivePanel::FileTree   => "[c] checkout | [a] add | [d] delete | [r] revert",
+    ActivePanel::Pending    => "[S] submit | [r] revert",
+    ActivePanel::ChangeList => "[s] sync | [g] show in filetree",
+    ActivePanel::Detail     => "[y] copy to clipboard",
+    _ => "",
+  };
+  
+  let right_fixed = "[Q] quit | [?] keybind | ver 0.0.1";
+  let total_width = footer_area.width as usize;
+  let right_width = right_fixed.chars().count();
+  
+  let mut footer_line = String::new();
+  if total_width > right_width + 5 {
+    let avail_left = total_width.saturating_sub(right_width).saturating_sub(2);
+    let left_part = if left_hints.chars().count() > avail_left {
+      format!("{}...", &left_hints[..avail_left.saturating_sub(3)])
+    } else {
+      left_hints.to_string()
+    };
+    let spacing = total_width.saturating_sub(left_part.chars().count()).saturating_sub(right_width);
+    footer_line = format!("{}{}{}", left_part, " ".repeat(spacing), right_fixed);
+  } else {
+    footer_line = right_fixed.to_string();
+  }
+
+  let footer = Paragraph::new(footer_line)
     .style(Style::default().fg(theme().component.pane_border));
   f.render_widget(footer, footer_area);
   
@@ -282,14 +308,19 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
   
   let parent_items: Vec<ListItem> = core.filetree.parent_files.iter().map(|file| {
     let (icon, color) = if file.is_dir {
-      (&theme().icon.folder_open, theme().component.default_text)
+      if file.path == core.client_root {
+        (&theme().icon.client_root, theme().component.default_text)
+      } else {
+        (&theme().icon.folder_open, theme().component.default_text)
+      }
     } else {
       match file.p4_status {
         FileP4Status::Add => (&theme().icon.mark_add, theme().p4.add),
         FileP4Status::Edit => (&theme().icon.own_edit, theme().p4.edit),
         FileP4Status::Delete => (&theme().icon.mark_delete, theme().p4.delete),
         FileP4Status::OtherCheckout => (&theme().icon.other_checkout, theme().p4.other_checkout),
-        _ => (&theme().icon.own_edit, theme().component.default_text),
+        FileP4Status::Untracked => (&theme().icon.untracked, theme().component.default_text),
+        _ => (&theme().icon.file_default, theme().component.default_text),
       }
     };
     ListItem::new(format!(" {} {} ", icon, file.name)).style(Style::default().fg(color))
@@ -298,7 +329,9 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
   let current_items: Vec<ListItem> = core.filetree.files.iter().enumerate().map(|(idx, file)| {
     let is_selected = core.filetree.selected == idx;
     let (icon, color) = if file.is_dir {
-      if is_selected {
+      if file.path == core.client_root {
+        (&theme().icon.client_root, theme().component.default_text)
+      } else if is_selected {
         (&theme().icon.folder_open, theme().component.default_text)
       } else if file.is_empty {
         (&theme().icon.folder_empty, theme().component.default_text)
@@ -311,7 +344,8 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
         FileP4Status::Edit => (&theme().icon.own_edit, theme().p4.edit),
         FileP4Status::Delete => (&theme().icon.mark_delete, theme().p4.delete),
         FileP4Status::OtherCheckout => (&theme().icon.other_checkout, theme().p4.other_checkout),
-        _ => (&theme().icon.own_edit, theme().component.default_text),
+        FileP4Status::Untracked => (&theme().icon.untracked, theme().component.default_text),
+        _ => (&theme().icon.file_default, theme().component.default_text),
       }
     };
     
@@ -414,7 +448,7 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
         "add" => (&theme().icon.mark_add, theme().p4.add),
         "edit" => (&theme().icon.own_edit, theme().p4.edit),
         "delete" => (&theme().icon.mark_delete, theme().p4.delete),
-        _ => (&theme().icon.own_edit, theme().component.default_text),
+        _ => (&theme().icon.file_default, theme().component.default_text),
       };
       
       let filename = std::path::Path::new(&file.path)
@@ -508,9 +542,13 @@ fn render_log(f: &mut Frame, area: Rect, core: &Core) {
     .block(block)
     .wrap(ratatui::widgets::Wrap { trim: true });
   
-  // 这里简单的滚动逻辑：根据 log_cursor 粗略计算 scroll offset
-  // 更精准的滚动需要计算换行后的行数，暂时简单处理
-  let scroll_offset = core.log_cursor as u16 * 3; 
+  // 更加精准的滚动：根据 log_cursor 前面的日志所占的行数计算 offset
+  let mut scroll_offset = 0;
+  for (i, log) in core.logs.iter().enumerate() {
+    if i >= core.log_cursor { break; }
+    let lines_count = log.output.lines().count() as u16;
+    scroll_offset += 1 + 1 + lines_count + 1; // Time + Cmd + Output + Spacer
+  }
   
   f.render_widget(paragraph.scroll((scroll_offset, 0)), area);
 }
@@ -630,6 +668,14 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
   let p = Paragraph::new(core.submit_description.as_str()).block(desc_block).style(Style::default().fg(theme().component.default_text));
   f.render_widget(p, chunks[0]);
   
+  // Add blinking cursor
+  if core.submit_focus == SubmitFocus::Description {
+    let cursor_x = chunks[0].x + 1 + core.submit_description.len() as u16;
+    let cursor_y = chunks[0].y + 1;
+    let max_x = chunks[0].x + chunks[0].width - 2;
+    f.set_cursor_position((cursor_x.min(max_x), cursor_y));
+  }
+  
   // File List Block
   let list_style = if core.submit_focus == SubmitFocus::FileList {
     Style::default().fg(theme().component.active_pane_border)
@@ -654,7 +700,7 @@ fn render_submit_overlay(f: &mut Frame, area: Rect, core: &Core) {
       "add" => (&theme().icon.mark_add, theme().p4.add),
       "edit" => (&theme().icon.own_edit, theme().p4.edit),
       "delete" => (&theme().icon.mark_delete, theme().p4.delete),
-      _ => (&theme().icon.own_edit, theme().component.default_text),
+      _ => (&theme().icon.file_default, theme().component.default_text),
     };
     
     let filename = std::path::Path::new(&file.path)
