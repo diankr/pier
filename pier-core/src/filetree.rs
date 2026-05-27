@@ -3,19 +3,21 @@ use std::fs;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileP4Status {
-	None,
-	Add,
-	Edit,
-	Delete,
-	Untracked,
+  None,
+  Add,
+  Edit,
+  Delete,
+  OtherCheckout,
+  Untracked,
 }
 
 #[derive(Clone, Debug)]
 pub struct FileItem {
-	pub name: String,
-	pub path: PathBuf,
-	pub is_dir: bool,
-	pub p4_status: FileP4Status,
+  pub name: String,
+  pub path: PathBuf,
+  pub is_dir: bool,
+  pub is_empty: bool,
+  pub p4_status: FileP4Status,
 }
 
 pub struct FileTree {
@@ -54,20 +56,27 @@ impl FileTree {
 		}
 	}
 
-	fn read_dir(&self, path: &Path) -> Vec<FileItem> {
-		let mut items = Vec::new();
-		if let Ok(entries) = fs::read_dir(path) {
-			for entry in entries.flatten() {
-				let path = entry.path();
-				let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-				items.push(FileItem {
-					name,
-					is_dir: path.is_dir(),
-					path,
-					p4_status: FileP4Status::None,
-				});
-			}
-		}
+  fn read_dir(&self, path: &Path) -> Vec<FileItem> {
+    let mut items = Vec::new();
+    if let Ok(entries) = fs::read_dir(path) {
+      for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let is_dir = path.is_dir();
+        let is_empty = if is_dir {
+          fs::read_dir(&path).map(|mut d| d.next().is_none()).unwrap_or(true)
+        } else {
+          false
+        };
+        items.push(FileItem {
+          name,
+          is_dir,
+          is_empty,
+          path,
+          p4_status: FileP4Status::None,
+        });
+      }
+    }
 		// 排序：目录在前，文件名在后
 		items.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
 		items

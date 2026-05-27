@@ -11,6 +11,8 @@ pub struct Theme {
   pub selection: Selection,
   #[serde(default)]
   pub p4: P4Colors,
+  #[serde(default)]
+  pub icon: Icons,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +63,8 @@ pub struct P4Colors {
   pub edit: Color,
   #[serde(deserialize_with = "deserialize_color")]
   pub delete: Color,
+  #[serde(deserialize_with = "deserialize_color")]
+  pub other_checkout: Color,
 }
 
 impl Default for P4Colors {
@@ -69,8 +73,41 @@ impl Default for P4Colors {
       add: hex_to_color("#85AB77"),
       edit: hex_to_color("#7DADA2"),
       delete: hex_to_color("#DA553F"),
+      other_checkout: hex_to_color("#C8899B"),
     }
   }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Icons {
+  pub own_edit: String,
+  pub other_checkout: String,
+  pub mark_add: String,
+  pub mark_delete: String,
+  pub folder: String,
+  pub folder_empty: String,
+  pub folder_open: String,
+}
+
+impl Default for Icons {
+  fn default() -> Self {
+    Self {
+      own_edit: char_from_hex("f0208").to_string(),
+      other_checkout: char_from_hex("f0420").to_string(),
+      mark_add: char_from_hex("f4d0").to_string(),
+      mark_delete: char_from_hex("f09e7").to_string(),
+      folder: char_from_hex("f024b").to_string(),
+      folder_empty: char_from_hex("f114").to_string(),
+      folder_open: char_from_hex("f115").to_string(),
+    }
+  }
+}
+
+fn char_from_hex(hex: &str) -> char {
+  u32::from_str_radix(hex, 16)
+    .ok()
+    .and_then(std::char::from_u32)
+    .unwrap_or('?')
 }
 
 fn hex_to_color(hex: &str) -> Color {

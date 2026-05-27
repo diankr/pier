@@ -133,9 +133,16 @@ impl Core {
   pub fn update_file_p4_statuses(&mut self) {
     let output = Command::new("p4")
       .arg("opened")
+      .arg("-a") // 显示所有人打开的文件
       .output();
 
     let mut opened_map = HashMap::new();
+    let mut other_opened = HashMap::new();
+    
+    // 获取当前 user 和 client，用于区分是否是自己
+    let p4_user = env::var("P4USER").unwrap_or_default();
+    let p4_client = env::var("P4CLIENT").unwrap_or_default();
+
     if let Ok(out) = output {
       let stdout = String::from_utf8_lossy(&out.stdout);
       for line in stdout.lines() {
@@ -143,8 +150,23 @@ impl Core {
           let depot_path = &line[..hash_idx];
           if let Some(dash_idx) = line.find(" - ") {
             let action_part = &line[dash_idx + 3..];
-            let action = action_part.split_whitespace().next().unwrap_or("");
-            opened_map.insert(depot_path.to_string(), action.to_string());
+            let mut parts = action_part.split_whitespace();
+            let action = parts.next().unwrap_or("");
+            
+            // p4 opened -a 输出格式: //depot/path#rev - edit default change (text) by user@client
+            let line_suffix = action_part.to_string();
+            let is_own = if !p4_user.is_empty() && !p4_client.is_empty() {
+              line_suffix.contains(&format!("by {}@{}", p4_user, p4_client))
+            } else {
+              // 如果环境变量没拿全，暂且认为不是自己的
+              false
+            };
+
+            if is_own {
+              opened_map.insert(depot_path.to_string(), action.to_string());
+            } else {
+              other_opened.insert(depot_path.to_string(), action.to_string());
+            }
           }
         }
       }
@@ -153,7 +175,10 @@ impl Core {
     let mut fstat_cmd = Command::new("p4");
     fstat_cmd.arg("fstat").arg("-T").arg("clientFile,depotFile");
     let mut files_to_stat = false;
-    for file in &self.filetree.files {
+    
+    // 收集 parent_files 和 files 中非目录的文件进行 fstat
+    let all_items = self.filetree.files.iter().chain(self.filetree.parent_files.iter());
+    for file in all_items {
       if !file.is_dir {
         fstat_cmd.arg(&file.path);
         files_to_stat = true;
@@ -163,7 +188,7 @@ impl Core {
     if files_to_stat {
       if let Ok(out) = fstat_cmd.output() {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let mut tracked_normalized = HashMap::new(); // Normalized path -> depot path
+        let mut tracked_normalized = HashMap::new(); 
         let mut current_block: HashMap<String, String> = HashMap::new();
 
         for line in stdout.lines() {
@@ -186,7 +211,9 @@ impl Core {
           tracked_normalized.insert(cf.to_lowercase().replace('\\', "/"), df.clone());
         }
 
-        for file in self.filetree.files.iter_mut() {
+        // 更新 files 和 parent_files
+        let all_mut_items = self.filetree.files.iter_mut().chain(self.filetree.parent_files.iter_mut());
+        for file in all_mut_items {
           if file.is_dir { continue; }
           let norm = Self::normalize_path(&file.path);
           if let Some(depot_path) = tracked_normalized.get(&norm) {
@@ -197,6 +224,8 @@ impl Core {
                 "delete" => FileP4Status::Delete,
                 _ => FileP4Status::None,
               };
+            } else if other_opened.contains_key(depot_path) {
+              file.p4_status = FileP4Status::OtherCheckout;
             } else {
               file.p4_status = FileP4Status::None;
             }

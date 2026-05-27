@@ -231,18 +231,44 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
     .split(ft_padded_area);
   
   let parent_items: Vec<ListItem> = core.filetree.parent_files.iter().map(|file| {
-    ListItem::new(format!(" {} ", file.name))
+    let (icon, color) = if file.is_dir {
+      if file.is_empty {
+        (&theme().icon.folder_empty, theme().component.default_text)
+      } else {
+        (&theme().icon.folder, theme().component.default_text)
+      }
+    } else {
+      match file.p4_status {
+        FileP4Status::Add => (&theme().icon.mark_add, theme().p4.add),
+        FileP4Status::Edit => (&theme().icon.own_edit, theme().p4.edit),
+        FileP4Status::Delete => (&theme().icon.mark_delete, theme().p4.delete),
+        FileP4Status::OtherCheckout => (&theme().icon.other_checkout, theme().p4.other_checkout),
+        _ => (&theme().icon.own_edit, theme().component.default_text), // Default file icon?
+      }
+    };
+    ListItem::new(format!(" {} {} ", icon, file.name)).style(Style::default().fg(color))
   }).collect();
   
-  let current_items: Vec<ListItem> = core.filetree.files.iter().map(|file| {
-    let (prefix, color) = match file.p4_status {
-      FileP4Status::Add => ("󱓡 ", theme().p4.add),
-      FileP4Status::Edit => ("󰐕 ", theme().p4.edit),
-      FileP4Status::Delete => ("󰩹 ", theme().p4.delete),
-      _ if file.is_dir => (" ", theme().component.default_text),
-      _ => (" ", theme().component.default_text),
+  let current_items: Vec<ListItem> = core.filetree.files.iter().enumerate().map(|(idx, file)| {
+    let is_selected = core.filetree.selected == idx;
+    let (icon, color) = if file.is_dir {
+      if is_selected {
+        (&theme().icon.folder_open, theme().component.default_text)
+      } else if file.is_empty {
+        (&theme().icon.folder_empty, theme().component.default_text)
+      } else {
+        (&theme().icon.folder, theme().component.default_text)
+      }
+    } else {
+      match file.p4_status {
+        FileP4Status::Add => (&theme().icon.mark_add, theme().p4.add),
+        FileP4Status::Edit => (&theme().icon.own_edit, theme().p4.edit),
+        FileP4Status::Delete => (&theme().icon.mark_delete, theme().p4.delete),
+        FileP4Status::OtherCheckout => (&theme().icon.other_checkout, theme().p4.other_checkout),
+        _ => (&theme().icon.own_edit, theme().component.default_text),
+      }
     };
-    ListItem::new(format!(" {} {} ", prefix, file.name)).style(Style::default().fg(color))
+    ListItem::new(format!(" {} {} ", icon, file.name)).style(Style::default().fg(color))
   }).collect();
 
   let is_ft_active = core.active_panel == ActivePanel::FileTree;
@@ -315,10 +341,10 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
       let symbol = if is_pd_active && is_selected { "> " } else { "  " };
       
       let (icon, color) = match file.action.as_str() {
-        "add" => ("󱓡 ", theme().p4.add),
-        "edit" => ("󰐕 ", theme().p4.edit),
-        "delete" => ("󰩹 ", theme().p4.delete),
-        _ => (" ", theme().component.default_text),
+        "add" => (&theme().icon.mark_add, theme().p4.add),
+        "edit" => (&theme().icon.own_edit, theme().p4.edit),
+        "delete" => (&theme().icon.mark_delete, theme().p4.delete),
+        _ => (&theme().icon.own_edit, theme().component.default_text),
       };
       
       let filename = std::path::Path::new(&file.path)
