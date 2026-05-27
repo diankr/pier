@@ -40,18 +40,31 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   let left_area = main_chunks[0];
   let right_area = main_chunks[1];
 
+  let is_scope_active = core.active_panel == ActivePanel::Scope;
+  let is_ft_active = core.active_panel == ActivePanel::FileTree;
+  let is_pd_active = core.active_panel == ActivePanel::Pending;
+  let is_cl_active = core.active_panel == ActivePanel::ChangeList;
+  let is_dt_active = core.active_panel == ActivePanel::Detail;
+  let is_log_active = core.active_panel == ActivePanel::Log;
+
   let scope_constraint = if state.is_scope_expanded {
     Constraint::Percentage(50)
   } else {
     Constraint::Length(3)
   };
 
+  let pending_constraint = if is_pd_active {
+    Constraint::Length(20) // Active 时两倍高度 (假设基础 6)
+  } else {
+    Constraint::Length(10)
+  };
+
   let left_chunks = Layout::default()
     .direction(Direction::Vertical)
     .constraints([
-      scope_constraint,
-      Constraint::Percentage(70),
-      Constraint::Min(3),
+      scope_constraint,     // Domain
+      Constraint::Min(10),  // FileTree (弹性)
+      pending_constraint,   // Pending
     ])
     .split(left_area);
 
@@ -59,29 +72,54 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   let filetree_area = left_chunks[1];
   let pending_area = left_chunks[2];
 
-  let right_chunks = Layout::default()
-    .direction(Direction::Vertical)
-    .constraints([
-      Constraint::Percentage(30),
-      Constraint::Percentage(50),
-      Constraint::Percentage(20),
-    ])
-    .split(right_area);
+  // Right Area Logic
+  let (changelist_area, detail_area, log_area) = if is_log_active {
+    (Rect::default(), Rect::default(), right_area)
+  } else {
+    let log_height = 10; // 维持跟 Pending inactive 一样高
+    let right_parts = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([
+        Constraint::Min(10), // CL + Detail
+        Constraint::Length(log_height), // Log
+      ])
+      .split(right_area);
+    
+    let cl_constraint = if is_cl_active {
+      Constraint::Percentage(66) // Active 时两倍于 Detail
+    } else {
+      Constraint::Percentage(50) // 默认二者平分
+    };
+    let dt_constraint = if is_cl_active {
+      Constraint::Percentage(34)
+    } else {
+      Constraint::Percentage(50)
+    };
 
-  let changelist_area = right_chunks[0];
-  let detail_area = right_chunks[1];
-  let log_area = right_chunks[2];
+    let top_parts = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([cl_constraint, dt_constraint])
+      .split(right_parts[0]);
+    
+    (top_parts[0], top_parts[1], right_parts[1])
+  };
 
-  // Scope
-  let scope_block = get_block("[1] Scope ", ActivePanel::Scope, core.active_panel);
+  // Domain (Domain 改名及内容 margin)
+  let scope_block = get_block("[1] Domain", ActivePanel::Scope, core.active_panel);
   let scope_inner = scope_block.inner(scope_area);
   
+  // 增加左侧 1 字符 margin
+  let scope_padded_area = Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints([Constraint::Length(1), Constraint::Min(0)])
+    .split(scope_inner)[1];
+
   let root_str = core.client_root.to_string_lossy();
-  let display_text = if scope_inner.width > 15 {
+  let display_text = if scope_padded_area.width > 15 {
     let prefix = "Client Root: ";
     let full_text = format!("{}{}", prefix, root_str);
     
-    if full_text.len() as u16 <= scope_inner.width {
+    if full_text.len() as u16 <= scope_padded_area.width {
       full_text
     } else {
       let last_part = core.client_root.file_name()
@@ -89,17 +127,18 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
         .unwrap_or_else(|| root_str.to_string());
       
       let abbreviated = format!("{}.../{}", prefix, last_part);
-      if abbreviated.len() as u16 <= scope_inner.width {
+      if abbreviated.len() as u16 <= scope_padded_area.width {
         abbreviated
       } else {
-        abbreviated.chars().take(scope_inner.width as usize).collect()
+        abbreviated.chars().take(scope_padded_area.width as usize).collect()
       }
     }
   } else {
     "".to_string()
   };
 
-  f.render_widget(Paragraph::new(display_text).block(scope_block).style(Style::default().fg(theme().component.default_text)), scope_area);
+  f.render_widget(scope_block, scope_area);
+  f.render_widget(Paragraph::new(display_text).style(Style::default().fg(theme().component.default_text)), scope_padded_area);
   
   // FileTree
   render_filetree(f, filetree_area, core);
@@ -107,15 +146,15 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   // Pending
   render_pending(f, pending_area, core);
 
-  // Right Panels
-  let cl_block = get_block("[4] ChangeList ", ActivePanel::ChangeList, core.active_panel);
-  let mut cl_items: Vec<ListItem> = Vec::new();
-  let mut current_ui_index = 0;
-  let mut selectable_index = 0;
-  let mut selected_ui_index = 0;
+  // Right Panels (Changelist & Detail 只在不被 Log 全屏时显示)
+  if !is_log_active {
+    let cl_block = get_block("[4] ChangeList", ActivePanel::ChangeList, core.active_panel);
+    let mut cl_items: Vec<ListItem> = Vec::new();
+    let mut current_ui_index = 0;
+    let mut selectable_index = 0;
+    let mut selected_ui_index = 0;
 
-  let content_width = (changelist_area.width as usize).saturating_sub(5);
-  let is_cl_active = core.active_panel == ActivePanel::ChangeList;
+    let content_width = (changelist_area.width as usize).saturating_sub(5);
 
   for (i, cl) in core.changelists.iter().enumerate() {
     let is_expanded = core.expanded_ids.contains(&cl.id);
@@ -206,6 +245,8 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   f.render_stateful_widget(cl_list.block(cl_block), changelist_area, &mut cl_list_state);
 
   render_detail(f, detail_area, core);
+  } // 这里闭合 if !is_log_active
+
   render_log(f, log_area, core);
 
   // Footer
@@ -220,7 +261,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
 }
 
 fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
-  let ft_block = get_block("[2] FileTree ", ActivePanel::FileTree, core.active_panel);
+  let ft_block = get_block("[2] FileTree", ActivePanel::FileTree, core.active_panel);
   let ft_inner_area = ft_block.inner(area);
   f.render_widget(ft_block, area);
 
@@ -329,7 +370,7 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
 }
 
 fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
-  let block = get_block("[3] Pending ", ActivePanel::Pending, core.active_panel);
+  let block = get_block("[3] Pending", ActivePanel::Pending, core.active_panel);
   let inner = block.inner(area);
   f.render_widget(block, area);
 
@@ -433,7 +474,7 @@ fn render_pending(f: &mut Frame, area: Rect, core: &Core) {
 }
 
 fn render_log(f: &mut Frame, area: Rect, core: &Core) {
-  let block = get_block("[@] Log ", ActivePanel::Log, core.active_panel);
+  let block = get_block("[@] Log", ActivePanel::Log, core.active_panel);
   
   let is_log_active = core.active_panel == ActivePanel::Log;
 
