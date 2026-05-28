@@ -79,14 +79,23 @@ pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
 				}
 			}
 			k if k.eq_ignore_ascii_case("headChange") => detail.changelist = value.to_string(),
-			k if k.eq_ignore_ascii_case("headAction") => detail.action = value.to_string(),
-			k if k.eq_ignore_ascii_case("otherOpen0") => detail.checkout_by = value.to_string(),
+			k if k.starts_with("otherOpen") => {
+				if detail.checkout_by.is_empty() || detail.checkout_by == "Unknown" {
+					detail.checkout_by = value.split('@').next().unwrap_or(value).to_string();
+				}
+			}
 			k if k.eq_ignore_ascii_case("action") || k.eq_ignore_ascii_case("change") => {
 				// 如果有本地 action 或 change 字段，说明当前用户打开了该文件
 				if detail.checkout_by.is_empty() || detail.checkout_by == "Unknown" {
 					detail.checkout_by = "You".to_string();
 				}
 				if k.eq_ignore_ascii_case("action") {
+					detail.action = value.to_string();
+				}
+			}
+			k if k.eq_ignore_ascii_case("headAction") => {
+				// 只有在还没有本地 action 的时候才使用 headAction
+				if detail.action.is_empty() {
 					detail.action = value.to_string();
 				}
 			}

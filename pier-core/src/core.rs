@@ -547,12 +547,6 @@ impl Core {
       current += 1;
       if self.expanded_ids.contains(&cl.id) {
         if let Some(details) = &cl.details {
-          let desc_len = details.full_description.len() + 1; // +1 for separator
-          if idx < current + desc_len {
-            return None; // It's description or separator
-          }
-          current += desc_len;
-
           if idx < current + details.files.len() {
             let file_idx = idx - current;
             return Some(ClTarget::File(cl.id.clone(), details.files[file_idx].path.clone()));

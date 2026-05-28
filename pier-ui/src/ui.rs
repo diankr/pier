@@ -287,7 +287,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     ActivePanel::Scope      => "[Enter] p4 info",
     ActivePanel::FileTree   => "[c] checkout | [a] add | [d] delete | [r] revert",
     ActivePanel::Pending    => "[S] submit | [r] revert",
-    ActivePanel::ChangeList => "[s] fetch & sync | [f] fetch | [g] sync to selected | [l] show in filetree",
+    ActivePanel::ChangeList => "[s] fetch & sync | [f] fetch | [g] sync to selected | [Shift+f] show in filetree",
 
     ActivePanel::Detail     => "[y] copy to clipboard",
     _ => "",
@@ -680,8 +680,18 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
 
     // [CheckoutBy] Header if not empty
     if !detail.checkout_by.trim().is_empty() {
-      let checkout_line = format!("  CheckoutBy: {}", detail.checkout_by);
-      items.push(ListItem::new(checkout_line).style(Style::default().fg(theme().p4.edit).add_modifier(Modifier::BOLD)));
+      let checkout_label = "CheckoutBy:";
+      let checkout_val = &detail.checkout_by;
+      
+      let pad_len = content_width.saturating_sub(checkout_label.len()).saturating_sub(checkout_val.len());
+      let line = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(checkout_label, Style::default().fg(theme().p4.edit).add_modifier(Modifier::BOLD)),
+        Span::raw(" ".repeat(pad_len)),
+        Span::styled(checkout_val, Style::default().fg(theme().p4.edit).add_modifier(Modifier::BOLD)),
+      ]);
+      
+      items.push(ListItem::new(line));
       
       let separator = "─".repeat(content_width);
       items.push(ListItem::new(format!("  {}", separator)).style(Style::default().fg(theme().component.pane_border)));

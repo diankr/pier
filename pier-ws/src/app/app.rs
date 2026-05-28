@@ -297,19 +297,7 @@ impl App {
 				self.core.cl_move_up();
 			}
 			(KeyCode::Char('l') | KeyCode::Enter, _) if self.core.active_panel == ActivePanel::ChangeList => {
-				if let Some(target) = self.core.get_cl_target_at(self.core.cl_cursor) {
-					match target {
-						pier_core::core::ClTarget::Id(_) => self.core.cl_expand(),
-						pier_core::core::ClTarget::File(_, depot_path) => {
-							if let Some(local_path) = self.core.cl_get_local_path(&depot_path) {
-								if self.core.jump_to_file(&local_path) {
-									self.trigger_detail_update();
-									self.trigger_status_update();
-								}
-							}
-						}
-					}
-				}
+				self.core.cl_expand();
 			}
 			(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::ChangeList => {
 				self.core.cl_collapse();
@@ -319,6 +307,18 @@ impl App {
 					self.core.changelists = cls;
 				}
 				self.last_cl_refresh = std::time::Instant::now();
+			}
+			(KeyCode::Char('F'), _) if self.core.active_panel == ActivePanel::ChangeList => {
+				if let Some(target) = self.core.get_cl_target_at(self.core.cl_cursor) {
+					if let pier_core::core::ClTarget::File(_, depot_path) = target {
+						if let Some(local_path) = self.core.cl_get_local_path(&depot_path) {
+							if self.core.jump_to_file(&local_path) {
+								self.trigger_detail_update();
+								self.trigger_status_update();
+							}
+						}
+					}
+				}
 			}
 			(KeyCode::Char('s'), _) if self.core.active_panel == ActivePanel::ChangeList => {
 				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root) {
