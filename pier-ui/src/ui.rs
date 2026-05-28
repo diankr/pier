@@ -162,12 +162,39 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     let is_head = i == 0;
     let is_selected = core.cl_cursor == selectable_index;
     
-    let symbol = if is_head { format!(" {}", theme().icon.changelist_head) } else { "  ".to_string() };
+    let is_new = if let Some(synced_id) = &core.synced_change_id {
+      let cl_val = cl.id.parse::<i64>().unwrap_or(0);
+      let synced_val = synced_id.parse::<i64>().unwrap_or(0);
+      cl_val > synced_val
+    } else {
+      false
+    };
+
+    let base_style = if is_new {
+      Style::default().fg(Color::Red)
+    } else {
+      Style::default().fg(theme().component.default_text)
+    };
+
+    let is_synced = if let Some(synced_id) = &core.synced_change_id {
+      cl.id == *synced_id
+    } else {
+      false
+    };
+
+    let symbol = if is_synced {
+      format!(" {}", theme().icon.changelist_head)
+    } else if is_head {
+      format!(" \u{f0e95}") // \uf0e9 for server head
+    } else {
+      "  ".to_string()
+    };
+
     
     let icon_span = if is_head {
-      ratatui::text::Span::styled(symbol, Style::default())
+      ratatui::text::Span::styled(symbol, base_style)
     } else {
-      ratatui::text::Span::from(symbol)
+      ratatui::text::Span::styled(symbol, base_style)
     };
 
     let id_str = format!(" {} ", cl.id);
@@ -179,9 +206,14 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     let time_len = time_str.len();
     
     let padding = content_width.saturating_sub(id_len).saturating_sub(author_len).saturating_sub(time_len);
-    let base_line = format!("{}{}{}{} ", id_str, author_str, " ".repeat(padding), time_str);
     
-    cl_items.push(ListItem::new(ratatui::text::Line::from(vec![icon_span, ratatui::text::Span::from(base_line)])));
+    cl_items.push(ListItem::new(ratatui::text::Line::from(vec![
+      icon_span, 
+      ratatui::text::Span::styled(id_str, base_style.add_modifier(Modifier::BOLD)),
+      ratatui::text::Span::styled(author_str, base_style),
+      ratatui::text::Span::styled(" ".repeat(padding), base_style),
+      ratatui::text::Span::styled(time_str, base_style),
+    ])));
     if is_selected {
       selected_ui_index = current_ui_index;
     }
@@ -255,7 +287,8 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     ActivePanel::Scope      => "[Enter] p4 info",
     ActivePanel::FileTree   => "[c] checkout | [a] add | [d] delete | [r] revert",
     ActivePanel::Pending    => "[S] submit | [r] revert",
-    ActivePanel::ChangeList => "[s] sync | [g] show in filetree",
+    ActivePanel::ChangeList => "[s] fetch & sync | [f] fetch | [g] sync to selected | [l] show in filetree",
+
     ActivePanel::Detail     => "[y] copy to clipboard",
     _ => "",
   };

@@ -71,6 +71,8 @@ pub struct Core {
   pub login_info: String,
   pub login_user: String,
   pub login_server: String,
+
+  pub synced_change_id: Option<String>,
 }
 
 impl Core {
@@ -132,11 +134,48 @@ impl Core {
       login_info: "Your session has expired, please login again".to_string(),
       login_user,
       login_server,
+      synced_change_id: None,
     };
     if !needs_login {
+      core.detect_synced_change();
       core.refresh_all();
     }
     Ok(core)
+  }
+
+  pub fn detect_synced_change(&mut self) {
+    let output = Command::new("p4").arg("changes").arg("-m").arg("1").arg("#have").output();
+    if let Ok(out) = output {
+      let stdout = String::from_utf8_lossy(&out.stdout);
+      if let Some(line) = stdout.lines().next() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+          let synced_id = parts[1].to_string();
+          self.synced_change_id = Some(synced_id.clone());
+          
+          // Align cursor to synced change if it exists in the current list
+          if let Some(pos) = self.changelists.iter().position(|c| c.id == synced_id) {
+            // This is simplified, only aligns if it's a top-level change
+            // and no expansions are active, which is fine for initial sync
+            self.cl_cursor = pos;
+          }
+        }
+      }
+    }
+  }
+
+  pub fn p4_sync_cl(&mut self, cl_id: &str) {
+    let output = Command::new("p4").arg("sync").arg(format!("@{}", cl_id)).output();
+    self.handle_p4_output("p4 sync", output);
+    self.detect_synced_change();
+    self.refresh_all();
+  }
+
+  pub fn p4_sync_latest(&mut self) {
+    let output = Command::new("p4").arg("sync").output();
+    self.handle_p4_output("p4 sync", output);
+    self.detect_synced_change();
+    self.refresh_all();
   }
 
   pub fn p4_login(&mut self) {
@@ -508,14 +547,53 @@ impl Core {
       current += 1;
       if self.expanded_ids.contains(&cl.id) {
         if let Some(details) = &cl.details {
+          let desc_len = details.full_description.len() + 1; // +1 for separator
+          if idx < current + desc_len {
+            return None; // It's description or separator
+          }
+          current += desc_len;
+
           if idx < current + details.files.len() {
-            return Some(ClTarget::File(cl.id.clone(), idx - current));
+            let file_idx = idx - current;
+            return Some(ClTarget::File(cl.id.clone(), details.files[file_idx].path.clone()));
           }
           current += details.files.len();
         }
       }
     }
     None
+  }
+
+  pub fn cl_get_local_path(&self, depot_path: &str) -> Option<PathBuf> {
+    let output = Command::new("p4").arg("where").arg(depot_path).output().ok()?;
+    if output.status.success() {
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      // p4 where output: //depot/path //client/path /local/path
+      let parts: Vec<&str> = stdout.split_whitespace().collect();
+      if parts.len() >= 3 {
+        return Some(PathBuf::from(parts[parts.len() - 1]));
+      }
+    }
+    None
+  }
+
+  pub fn jump_to_file(&mut self, local_path: &Path) -> bool {
+    if !local_path.exists() {
+      return false;
+    }
+
+    let parent = local_path.parent().unwrap_or(Path::new("/"));
+    self.filetree.current_path = parent.to_path_buf();
+    self.filetree.refresh();
+    
+    if let Some(pos) = self.filetree.files.iter().position(|f| f.path == local_path) {
+      self.filetree.selected = pos;
+      self.active_panel = ActivePanel::FileTree;
+      self.update_detail();
+      true
+    } else {
+      false
+    }
   }
 
   fn sync_cl_cursor_after_collapse(&mut self, collapsed_id: &str) {
@@ -594,7 +672,7 @@ impl Core {
 
 pub enum ClTarget {
   Id(String),
-  File(String, usize), 
+  File(String, String), // id, depot_path
 }
 
 pub fn fetch_file_statuses(paths: &[PathBuf]) -> HashMap<PathBuf, FileP4Status> {
