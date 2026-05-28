@@ -65,13 +65,38 @@ pub struct Core {
 
   pub input: ActivePanel,
   pub confirm: ActivePanel,
+
+  pub is_login_overlay_open: bool,
+  pub login_password: String,
+  pub login_info: String,
+  pub login_user: String,
+  pub login_server: String,
 }
 
 impl Core {
   pub fn new() -> Result<Self, String> {
-    let client_root = Self::detect_p4_root()?;
+    let (client_root, login_user, login_server, mut needs_login) = Self::detect_p4_info()?;
     let _ = env::set_current_dir(&client_root);
-    let changelists = fetch_changelists(&client_root)?;
+    
+    // Attempt to fetch changelists, but don't fail if it's a login issue
+    let changelists = match fetch_changelists(&client_root) {
+      Ok(cls) => cls,
+      Err(e) => {
+        if e.contains("please login again") || e.contains("password") {
+          needs_login = true;
+          Vec::new()
+        } else {
+          // If it's another error, we still might want to proceed if we need login
+          // but if we are supposedly logged in and this fails, it's a real error.
+          if needs_login {
+            Vec::new()
+          } else {
+            return Err(e);
+          }
+        }
+      }
+    };
+
     let logs = Self::load_logs();
     let log_cursor = logs.len().saturating_sub(1);
 
@@ -102,9 +127,46 @@ impl Core {
       log_panel: ActivePanel::Log,
       input: ActivePanel::Input,
       confirm: ActivePanel::Confirm,
+      is_login_overlay_open: needs_login,
+      login_password: String::new(),
+      login_info: "Your session has expired, please login again".to_string(),
+      login_user,
+      login_server,
     };
-    core.refresh_all();
+    if !needs_login {
+      core.refresh_all();
+    }
     Ok(core)
+  }
+
+  pub fn p4_login(&mut self) {
+    use std::io::Write;
+    let mut child = Command::new("p4")
+      .arg("login")
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::piped())
+      .stderr(std::process::Stdio::piped())
+      .spawn()
+      .expect("Failed to spawn p4 login");
+
+    if let Some(mut stdin) = child.stdin.take() {
+      stdin.write_all(self.login_password.as_bytes()).ok();
+      stdin.write_all(b"\n").ok();
+    }
+
+    let output = child.wait_with_output().expect("Failed to read p4 login output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if stdout.contains("logged in") {
+      self.is_login_overlay_open = false;
+      self.login_password.clear();
+      self.refresh_all();
+    } else {
+      self.login_info = "Password Invalid".to_string();
+    }
+    
+    self.add_log("p4 login", &format!("{}\n{}", stdout, stderr));
   }
 
   pub fn refresh_all(&mut self) {
@@ -112,6 +174,9 @@ impl Core {
     self.update_file_p4_statuses();
     self.update_pending_files();
     self.update_detail();
+    if let Ok(cls) = fetch_changelists(&self.client_root) {
+      self.changelists = cls;
+    }
   }
 
   pub fn update_pending_files(&mut self) {
@@ -122,6 +187,11 @@ impl Core {
     self.pending_files.clear();
     if let Ok(out) = output {
       let stdout = String::from_utf8_lossy(&out.stdout);
+      let stderr = String::from_utf8_lossy(&out.stderr);
+      if stdout.contains("please login again") || stderr.contains("please login again") {
+        self.is_login_overlay_open = true;
+        return;
+      }
       for line in stdout.lines() {
         let parts: Vec<&str> = line.split(" - ").collect();
         if parts.len() >= 2 {
@@ -146,108 +216,20 @@ impl Core {
   }
 
   pub fn update_file_p4_statuses(&mut self) {
-    let output = Command::new("p4")
-      .arg("opened")
-      .arg("-a") // 显示所有人打开的文件
-      .output();
-
-    let mut opened_map = HashMap::new();
-    let mut other_opened = HashMap::new();
-    
-    // 获取当前 user 和 client，用于区分是否是自己
-    let p4_user = env::var("P4USER").unwrap_or_default();
-    let p4_client = env::var("P4CLIENT").unwrap_or_default();
-
-    if let Ok(out) = output {
-      let stdout = String::from_utf8_lossy(&out.stdout);
-      for line in stdout.lines() {
-        if let Some(hash_idx) = line.find('#') {
-          let depot_path = &line[..hash_idx];
-          if let Some(dash_idx) = line.find(" - ") {
-            let action_part = &line[dash_idx + 3..];
-            let mut parts = action_part.split_whitespace();
-            let action = parts.next().unwrap_or("");
-            
-            // p4 opened -a 输出格式: //depot/path#rev - edit default change (text) by user@client
-            let line_suffix = action_part.to_string();
-            let is_own = if !p4_user.is_empty() && !p4_client.is_empty() {
-              line_suffix.contains(&format!("by {}@{}", p4_user, p4_client))
-            } else {
-              // 如果环境变量没拿全，暂且认为不是自己的
-              false
-            };
-
-            if is_own {
-              opened_map.insert(depot_path.to_string(), action.to_string());
-            } else {
-              other_opened.insert(depot_path.to_string(), action.to_string());
-            }
-          }
-        }
-      }
-    }
-
-    let mut fstat_cmd = Command::new("p4");
-    fstat_cmd.arg("fstat").arg("-T").arg("clientFile,depotFile");
-    let mut files_to_stat = false;
-    
-    // 收集 parent_files 和 files 中非目录的文件进行 fstat
-    let all_items = self.filetree.files.iter().chain(self.filetree.parent_files.iter());
-    for file in all_items {
+    if self.is_login_overlay_open { return; }
+    let mut paths = Vec::new();
+    for file in self.filetree.files.iter().chain(self.filetree.parent_files.iter()) {
       if !file.is_dir {
-        fstat_cmd.arg(&file.path);
-        files_to_stat = true;
+        paths.push(file.path.clone());
       }
     }
-
-    if files_to_stat {
-      if let Ok(out) = fstat_cmd.output() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let mut tracked_normalized = HashMap::new(); 
-        let mut current_block: HashMap<String, String> = HashMap::new();
-
-        for line in stdout.lines() {
-          let trimmed = line.trim();
-          if trimmed.is_empty() {
-            if let (Some(cf), Some(df)) = (current_block.get("clientFile"), current_block.get("depotFile")) {
-              tracked_normalized.insert(cf.to_lowercase().replace('\\', "/"), df.clone());
-            }
-            current_block.clear();
-            continue;
-          }
-          if trimmed.starts_with("... ") {
-            let parts: Vec<&str> = trimmed[4..].splitn(2, ' ').collect();
-            if parts.len() == 2 {
-              current_block.insert(parts[0].to_string(), parts[1].trim().to_string());
-            }
-          }
-        }
-        if let (Some(cf), Some(df)) = (current_block.get("clientFile"), current_block.get("depotFile")) {
-          tracked_normalized.insert(cf.to_lowercase().replace('\\', "/"), df.clone());
-        }
-
-        // 更新 files 和 parent_files
-        let all_mut_items = self.filetree.files.iter_mut().chain(self.filetree.parent_files.iter_mut());
-        for file in all_mut_items {
-          if file.is_dir { continue; }
-          let norm = Self::normalize_path(&file.path);
-          if let Some(depot_path) = tracked_normalized.get(&norm) {
-            if let Some(action) = opened_map.get(depot_path) {
-              file.p4_status = match action.as_str() {
-                "add" => FileP4Status::Add,
-                "edit" => FileP4Status::Edit,
-                "delete" => FileP4Status::Delete,
-                _ => FileP4Status::None,
-              };
-            } else if other_opened.contains_key(depot_path) {
-              file.p4_status = FileP4Status::OtherCheckout;
-            } else {
-              file.p4_status = FileP4Status::None;
-            }
-          } else {
-            file.p4_status = FileP4Status::Untracked;
-          }
-        }
+    let statuses = fetch_file_statuses(&paths);
+    for file in self.filetree.files.iter_mut().chain(self.filetree.parent_files.iter_mut()) {
+      if file.is_dir { continue; }
+      if let Some(status) = statuses.get(&file.path) {
+        file.p4_status = status.clone();
+      } else {
+        file.p4_status = FileP4Status::Untracked;
       }
     }
   }
@@ -360,6 +342,7 @@ impl Core {
   }
 
   pub fn update_detail(&mut self) {
+    if self.is_login_overlay_open { return; }
     if let Some(file) = self.filetree.files.get(self.filetree.selected) {
       match fetch_file_detail(&file.path) {
         Ok(detail) => {
@@ -389,13 +372,11 @@ impl Core {
 
   pub fn ft_enter_dir(&mut self) {
     self.filetree.enter_dir();
-    self.refresh_all();
     self.pending_cursor = 0;
   }
 
   pub fn ft_leave_dir(&mut self) {
     self.filetree.leave_dir();
-    self.refresh_all();
     self.pending_cursor = 0;
   }
 
@@ -553,23 +534,36 @@ impl Core {
     }
   }
 
-  fn detect_p4_root() -> Result<PathBuf, String> {
+  fn detect_p4_info() -> Result<(PathBuf, String, String, bool), String> {
     let output = Command::new("p4").arg("info").output()
       .map_err(|e| format!("Failed to execute p4 command: {}", e))?;
-    if !output.status.success() {
-      return Err("Not in a Perforce workspace (p4 info failed).".to_string());
-    }
+    
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}\n{}", stdout, stderr);
+
+    let needs_login = combined.contains("please login again") || combined.contains("password");
+    
+    let mut client_root = None;
+    let mut user = String::new();
+    let mut server = String::new();
+
+    for line in combined.lines() {
       if line.starts_with("Client root: ") {
         let path_str = line.trim_start_matches("Client root: ").trim();
-        if path_str == "null" || path_str.is_empty() {
-          return Err("Perforce client root is not set (null).".to_string());
+        if path_str != "null" && !path_str.is_empty() {
+          client_root = Some(PathBuf::from(path_str));
         }
-        return Ok(PathBuf::from(path_str));
+      } else if line.starts_with("User name: ") {
+        user = line.trim_start_matches("User name: ").trim().to_string();
+      } else if line.starts_with("Server address: ") {
+        server = line.trim_start_matches("Server address: ").trim().to_string();
       }
     }
-    Err("Could not find 'Client root' in p4 info output. Are you logged in?".to_string())
+
+    let root = client_root.ok_or_else(|| "Could not find 'Client root' in p4 info output.".to_string())?;
+    
+    Ok((root, user, server, needs_login))
   }
 
   pub fn p4_submit(&mut self) {
@@ -601,4 +595,100 @@ impl Core {
 pub enum ClTarget {
   Id(String),
   File(String, usize), 
+}
+
+pub fn fetch_file_statuses(paths: &[PathBuf]) -> HashMap<PathBuf, FileP4Status> {
+  let mut opened_map = HashMap::new();
+  let mut other_opened = HashMap::new();
+  
+  let p4_user = env::var("P4USER").unwrap_or_default();
+  let p4_client = env::var("P4CLIENT").unwrap_or_default();
+
+  if let Ok(out) = Command::new("p4").arg("opened").arg("-a").output() {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+      if let Some(hash_idx) = line.find('#') {
+        let depot_path = &line[..hash_idx];
+        if let Some(dash_idx) = line.find(" - ") {
+          let action_part = &line[dash_idx + 3..];
+          let mut parts = action_part.split_whitespace();
+          let action = parts.next().unwrap_or("");
+          
+          let line_suffix = action_part.to_string();
+          let is_own = if !p4_user.is_empty() && !p4_client.is_empty() {
+            line_suffix.contains(&format!("by {}@{}", p4_user, p4_client))
+          } else {
+            false
+          };
+
+          if is_own {
+            opened_map.insert(depot_path.to_string(), action.to_string());
+          } else {
+            other_opened.insert(depot_path.to_string(), action.to_string());
+          }
+        }
+      }
+    }
+  }
+
+  let mut fstat_cmd = Command::new("p4");
+  fstat_cmd.arg("fstat").arg("-T").arg("clientFile,depotFile");
+  let mut files_to_stat = false;
+  
+  for path in paths {
+    fstat_cmd.arg(path);
+    files_to_stat = true;
+  }
+
+  let mut result = HashMap::new();
+
+  if files_to_stat {
+    if let Ok(out) = fstat_cmd.output() {
+      let stdout = String::from_utf8_lossy(&out.stdout);
+      let mut tracked_normalized = HashMap::new(); 
+      let mut current_block: HashMap<String, String> = HashMap::new();
+
+      for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+          if let (Some(cf), Some(df)) = (current_block.get("clientFile"), current_block.get("depotFile")) {
+            tracked_normalized.insert(cf.to_lowercase().replace('\\', "/"), df.clone());
+          }
+          current_block.clear();
+          continue;
+        }
+        if trimmed.starts_with("... ") {
+          let parts: Vec<&str> = trimmed[4..].splitn(2, ' ').collect();
+          if parts.len() == 2 {
+            current_block.insert(parts[0].to_string(), parts[1].trim().to_string());
+          }
+        }
+      }
+      if let (Some(cf), Some(df)) = (current_block.get("clientFile"), current_block.get("depotFile")) {
+        tracked_normalized.insert(cf.to_lowercase().replace('\\', "/"), df.clone());
+      }
+
+      for path in paths {
+        let norm = path.to_string_lossy().to_lowercase().replace('\\', "/");
+        if let Some(depot_path) = tracked_normalized.get(&norm) {
+          if let Some(action) = opened_map.get(depot_path) {
+            let status = match action.as_str() {
+              "add" => FileP4Status::Add,
+              "edit" => FileP4Status::Edit,
+              "delete" => FileP4Status::Delete,
+              _ => FileP4Status::None,
+            };
+            result.insert(path.clone(), status);
+          } else if other_opened.contains_key(depot_path) {
+            result.insert(path.clone(), FileP4Status::OtherCheckout);
+          } else {
+            result.insert(path.clone(), FileP4Status::None);
+          }
+        } else {
+          result.insert(path.clone(), FileP4Status::Untracked);
+        }
+      }
+    }
+  }
+  result
 }

@@ -27,6 +27,8 @@ pub(crate) struct App {
 	pub(crate) should_quit: bool,
 	detail_tx: tokio::sync::mpsc::UnboundedSender<PathBuf>,
 	detail_rx: tokio::sync::mpsc::UnboundedReceiver<Result<pier_core::detail::FileDetail, String>>,
+	status_tx: tokio::sync::mpsc::UnboundedSender<Vec<PathBuf>>,
+	status_rx: tokio::sync::mpsc::UnboundedReceiver<std::collections::HashMap<PathBuf, pier_core::filetree::FileP4Status>>,
 }
 
 impl App {
@@ -52,6 +54,22 @@ impl App {
 			}
 		});
 
+		let (status_request_tx, mut status_request_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<PathBuf>>();
+		let (status_result_tx, status_result_rx) = tokio::sync::mpsc::unbounded_channel::<std::collections::HashMap<PathBuf, pier_core::filetree::FileP4Status>>();
+
+		tokio::spawn(async move {
+			let mut last_paths = None;
+			while let Some(paths) = status_request_rx.recv().await {
+				last_paths = Some(paths.clone());
+				tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+				if status_request_rx.len() > 0 {
+					continue;
+				}
+				let statuses = pier_core::core::fetch_file_statuses(&paths);
+				let _ = status_result_tx.send(statuses);
+			}
+		});
+
 		Ok(Self {
 			core,
 			term,
@@ -59,6 +77,8 @@ impl App {
 			should_quit: false,
 			detail_tx: request_tx,
 			detail_rx: result_rx,
+			status_tx: status_request_tx,
+			status_rx: status_result_rx,
 		})
 	}
 
@@ -105,6 +125,17 @@ impl App {
 				}
 			}
 
+			while let Ok(statuses) = self.status_rx.try_recv() {
+				for file in self.core.filetree.files.iter_mut().chain(self.core.filetree.parent_files.iter_mut()) {
+					if file.is_dir { continue; }
+					if let Some(status) = statuses.get(&file.path) {
+						file.p4_status = status.clone();
+					} else {
+						file.p4_status = pier_core::filetree::FileP4Status::Untracked;
+					}
+				}
+			}
+
 			self.term.draw(|f| {
 				let area = f.area();
 				render_root(f, area, &self.state, &self.core);
@@ -113,7 +144,9 @@ impl App {
 			if event::poll(Duration::from_millis(10))? {
 				if let Event::Key(key) = event::read()? {
 					if key.kind == KeyEventKind::Press {
-						if self.core.is_submit_overlay_open {
+						if self.core.is_login_overlay_open {
+							self.handle_login_keys(key);
+						} else if self.core.is_submit_overlay_open {
 							self.handle_submit_keys(key);
 						} else {
 							self.handle_main_keys(key);
@@ -124,6 +157,22 @@ impl App {
 			sleep(Duration::from_millis(10)).await;
 		}
 		Ok(())
+	}
+
+	fn handle_login_keys(&mut self, key: event::KeyEvent) {
+		match (key.code, key.modifiers) {
+			(KeyCode::Esc, _) => self.should_quit = true,
+			(KeyCode::Enter, _) => {
+				self.core.p4_login();
+			}
+			(KeyCode::Char(c), _) => {
+				self.core.login_password.push(c);
+			}
+			(KeyCode::Backspace, _) => {
+				self.core.login_password.pop();
+			}
+			_ => {}
+		}
 	}
 
 	fn handle_submit_keys(&mut self, key: event::KeyEvent) {
@@ -194,10 +243,12 @@ impl App {
 			(KeyCode::Char('l'), _) if self.core.active_panel == ActivePanel::FileTree => {
 				self.core.ft_enter_dir();
 				self.trigger_detail_update();
+				self.trigger_status_update();
 			}
 			(KeyCode::Char('h'), _) if self.core.active_panel == ActivePanel::FileTree => {
 				self.core.ft_leave_dir();
 				self.trigger_detail_update();
+				self.trigger_status_update();
 			}
 			(KeyCode::Char('c'), _) if self.core.active_panel == ActivePanel::FileTree => {
 				self.core.ft_p4_edit();
@@ -273,5 +324,15 @@ impl App {
 			}
 			let _ = self.detail_tx.send(file.path.clone());
 		}
+	}
+
+	fn trigger_status_update(&mut self) {
+		let mut paths = Vec::new();
+		for file in self.core.filetree.files.iter().chain(self.core.filetree.parent_files.iter()) {
+			if !file.is_dir {
+				paths.push(file.path.clone());
+			}
+		}
+		let _ = self.status_tx.send(paths);
 	}
 }

@@ -17,15 +17,6 @@ pub struct FileDetail {
 }
 
 pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
-	// 尝试从磁盘缓存获取
-	if let Some(cached) = load_from_cache(path) {
-		return Ok(cached);
-	}
-	
-	fetch_file_detail_no_cache(path)
-}
-
-pub fn fetch_file_detail_no_cache(path: &Path) -> Result<FileDetail, String> {
 	// 使用 p4 fstat 获取大部分信息
 	let output = Command::new("p4")
 		.arg("fstat")

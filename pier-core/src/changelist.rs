@@ -113,7 +113,8 @@ pub fn fetch_changelists(root: &Path) -> Result<Vec<ChangeListItem>, String> {
 		.map_err(|e| format!("Failed to execute p4 changes: {}", e))?;
 
 	if !output.status.success() {
-		return Err("Failed to get p4 changes.".to_string());
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		return Err(format!("Failed to get p4 changes: {}", stderr));
 	}
 
 	let stdout = String::from_utf8_lossy(&output.stdout);
