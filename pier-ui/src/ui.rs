@@ -4,7 +4,7 @@ use pier_core::filetree::FileP4Status;
 use ratatui::{
   layout::{Constraint, Direction, Layout, Rect, Alignment},
   style::{Modifier, Style, Color},
-  widgets::{Block, Borders, List, ListItem, Paragraph},
+  widgets::{Block, Borders, List, ListItem, Paragraph, Gauge},
   text::{Line, Span},
   Frame,
 };
@@ -322,10 +322,18 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   if core.is_login_overlay_open {
     render_login_overlay(f, area, core);
   }
+
+  if core.is_syncing {
+    render_sync_overlay(f, area, core);
+  }
 }
 
 fn render_login_overlay(f: &mut Frame, area: Rect, core: &Core) {
-  let overlay_area = centered_rect(60, 25, area);
+  let mut overlay_area = centered_rect(60, 25, area);
+  if overlay_area.height < 12 {
+    overlay_area.height = 12.min(area.height);
+    overlay_area.y = (area.height.saturating_sub(overlay_area.height)) / 2;
+  }
   f.render_widget(ratatui::widgets::Clear, overlay_area);
 
   let chunks = Layout::default()
@@ -895,4 +903,54 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
       Constraint::Percentage((100 - percent_x) / 2),
     ])
     .split(popup_layout[1])[1]
+}
+
+fn render_sync_overlay(f: &mut Frame, area: Rect, core: &Core) {
+  let overlay_area = centered_rect(70, 60, area);
+  f.render_widget(ratatui::widgets::Clear, overlay_area);
+
+  let chunks = Layout::default()
+    .direction(Direction::Vertical)
+    .constraints([
+      Constraint::Length(3), // Sync Process
+      Constraint::Min(0),    // File to Sync
+    ])
+    .split(overlay_area);
+
+  // Upper Block: Sync Process
+  let progress_block = Block::default()
+    .title(Line::from("─Sync Process ").alignment(Alignment::Center))
+    .borders(Borders::ALL)
+    .border_set(ratatui::symbols::border::ROUNDED)
+    .border_style(Style::default().fg(theme().component.active_pane_border));
+
+  let label = format!("{:.0}%", core.sync_progress * 100.0);
+  let gauge = Gauge::default()
+    .block(progress_block)
+    .gauge_style(Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::ITALIC))
+    .ratio(core.sync_progress)
+    .label(label);
+  f.render_widget(gauge, chunks[0]);
+
+  // Lower Block: File to Sync
+  let list_block = Block::default()
+    .title(Line::from("─File to Sync ").alignment(Alignment::Center))
+    .borders(Borders::ALL)
+    .border_set(ratatui::symbols::border::ROUNDED)
+    .border_style(Style::default().fg(theme().component.pane_border));
+
+  let items: Vec<ListItem> = core.sync_files.iter().map(|f| {
+    ListItem::new(Line::from(vec![Span::raw(" "), Span::raw(f)]))
+  }).collect();
+
+  let list = List::new(items)
+    .block(list_block)
+    .style(Style::default().fg(theme().component.default_text))
+    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+  
+  let mut state = ratatui::widgets::ListState::default();
+  if core.sync_current > 0 {
+    state.select(Some(core.sync_current.saturating_sub(1)));
+  }
+  f.render_stateful_widget(list, chunks[1], &mut state);
 }

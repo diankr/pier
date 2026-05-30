@@ -15,10 +15,18 @@ use pier_core::core::Core;
 use pier_ui::ui::{render_root, UiState};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::time::sleep;
+use tokio::io::AsyncBufReadExt;
 
 use super::commands::Quit;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
+
+enum SyncEvent {
+	Start(Vec<String>),
+	Progress(String),
+	End,
+	Error(String),
+}
 
 pub(crate) struct App {
 	pub(crate) core: Core,
@@ -29,6 +37,12 @@ pub(crate) struct App {
 	detail_rx: tokio::sync::mpsc::UnboundedReceiver<Result<pier_core::detail::FileDetail, String>>,
 	status_tx: tokio::sync::mpsc::UnboundedSender<Vec<PathBuf>>,
 	status_rx: tokio::sync::mpsc::UnboundedReceiver<std::collections::HashMap<PathBuf, pier_core::filetree::FileP4Status>>,
+	
+	sync_tx: tokio::sync::mpsc::UnboundedSender<SyncEvent>,
+	sync_rx: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>,
+	sync_handle: Option<tokio::task::JoinHandle<()>>,
+	sync_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+
 	last_cl_refresh: std::time::Instant,
 }
 
@@ -71,6 +85,8 @@ impl App {
 			}
 		});
 
+		let (sync_tx, sync_rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+
 		Ok(Self {
 			core,
 			term,
@@ -80,6 +96,10 @@ impl App {
 			detail_rx: result_rx,
 			status_tx: status_request_tx,
 			status_rx: status_result_rx,
+			sync_tx,
+			sync_rx,
+			sync_handle: None,
+			sync_cancel_tx: None,
 			last_cl_refresh: std::time::Instant::now(),
 		})
 	}
@@ -138,6 +158,35 @@ impl App {
 				}
 			}
 
+			while let Ok(event) = self.sync_rx.try_recv() {
+				match event {
+					SyncEvent::Start(files) => {
+						self.core.sync_files = files;
+						self.core.sync_total = self.core.sync_files.len();
+						self.core.sync_current = 0;
+						self.core.sync_progress = 0.0;
+					}
+					SyncEvent::Progress(_file) => {
+						self.core.sync_current += 1;
+						if self.core.sync_total > 0 {
+							self.core.sync_progress = self.core.sync_current as f64 / self.core.sync_total as f64;
+						}
+					}
+					SyncEvent::End => {
+						self.core.is_syncing = false;
+						self.core.detect_synced_change();
+						self.sync_handle = None;
+						self.sync_cancel_tx = None;
+					}
+					SyncEvent::Error(e) => {
+						self.core.is_syncing = false;
+						self.core.add_log("Sync Error", &e);
+						self.sync_handle = None;
+						self.sync_cancel_tx = None;
+					}
+				}
+			}
+
 			if self.last_cl_refresh.elapsed() >= Duration::from_secs(60) {
 				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root) {
 					self.core.changelists = cls;
@@ -153,7 +202,14 @@ impl App {
 			if event::poll(Duration::from_millis(10))? {
 				if let Event::Key(key) = event::read()? {
 					if key.kind == KeyEventKind::Press {
-						if self.core.is_login_overlay_open {
+						if self.core.is_syncing {
+							if key.code == KeyCode::Esc {
+								if let Some(cancel) = self.sync_cancel_tx.take() {
+									let _ = cancel.send(());
+								}
+								self.core.is_syncing = false;
+							}
+						} else if self.core.is_login_overlay_open {
 							self.handle_login_keys(key);
 						} else if self.core.is_submit_overlay_open {
 							self.handle_submit_keys(key);
@@ -324,13 +380,13 @@ impl App {
 				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root) {
 					self.core.changelists = cls;
 				}
-				self.core.p4_sync_latest();
+				self.start_sync(None);
 				self.last_cl_refresh = std::time::Instant::now();
 			}
 			(KeyCode::Char('g'), _) if self.core.active_panel == ActivePanel::ChangeList => {
 				if let Some(target) = self.core.get_cl_target_at(self.core.cl_cursor) {
 					if let pier_core::core::ClTarget::Id(id) = target {
-						self.core.p4_sync_cl(&id);
+						self.start_sync(Some(id));
 					}
 				}
 			}
@@ -375,5 +431,91 @@ impl App {
 			}
 		}
 		let _ = self.status_tx.send(paths);
+	}
+
+	fn start_sync(&mut self, cl_id: Option<String>) {
+		if self.core.is_syncing { return; }
+		self.core.is_syncing = true;
+		self.core.sync_progress = 0.0;
+		self.core.sync_files.clear();
+		self.core.sync_total = 0;
+		self.core.sync_current = 0;
+
+		let tx = self.sync_tx.clone();
+		let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+		self.sync_cancel_tx = Some(cancel_tx);
+
+		let handle = tokio::spawn(async move {
+			// 1. Dry run to get files
+			let mut cmd = tokio::process::Command::new("p4");
+			cmd.arg("sync").arg("-n");
+			if let Some(id) = &cl_id {
+				cmd.arg(format!("@{}", id));
+			}
+			
+			let output = cmd.output().await;
+			let files = if let Ok(out) = output {
+				String::from_utf8_lossy(&out.stdout)
+					.lines()
+					.filter(|l| !l.is_empty())
+					.map(|l| l.to_string())
+					.collect::<Vec<_>>()
+			} else {
+				vec![]
+			};
+
+			if files.is_empty() {
+				let _ = tx.send(SyncEvent::End);
+				return;
+			}
+
+			let _ = tx.send(SyncEvent::Start(files));
+
+			// 2. Actual sync
+			let mut cmd = tokio::process::Command::new("p4");
+			cmd.arg("sync");
+			if let Some(id) = cl_id {
+				cmd.arg(format!("@{}", id));
+			}
+			cmd.stdout(std::process::Stdio::piped());
+			cmd.stderr(std::process::Stdio::piped());
+			
+			let mut child = match cmd.spawn() {
+				Ok(c) => c,
+				Err(e) => {
+					let _ = tx.send(SyncEvent::Error(e.to_string()));
+					return;
+				}
+			};
+
+			let stdout = child.stdout.take().unwrap();
+			let mut reader = tokio::io::BufReader::new(stdout);
+			
+			loop {
+				let mut line = String::new();
+				tokio::select! {
+					_ = &mut cancel_rx => {
+						let _ = child.kill().await;
+						return;
+					}
+					res = reader.read_line(&mut line) => {
+						match res {
+							Ok(0) => break,
+							Ok(_) => {
+								let trimmed = line.trim();
+								if !trimmed.is_empty() {
+									let _ = tx.send(SyncEvent::Progress(trimmed.to_string()));
+								}
+							}
+							Err(_) => break,
+						}
+					}
+				}
+			}
+
+			let _ = child.wait().await;
+			let _ = tx.send(SyncEvent::End);
+		});
+		self.sync_handle = Some(handle);
 	}
 }

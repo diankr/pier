@@ -72,6 +72,12 @@ pub struct Core {
   pub login_user: String,
   pub login_server: String,
 
+  pub is_syncing: bool,
+  pub sync_progress: f64,
+  pub sync_files: Vec<String>,
+  pub sync_total: usize,
+  pub sync_current: usize,
+
   pub synced_change_id: Option<String>,
 }
 
@@ -134,7 +140,15 @@ impl Core {
       login_info: "Your session has expired, please login again".to_string(),
       login_user,
       login_server,
+
+      is_syncing: false,
+      sync_progress: 0.0,
+      sync_files: Vec::new(),
+      sync_total: 0,
+      sync_current: 0,
+
       synced_change_id: None,
+
     };
     if !needs_login {
       core.detect_synced_change();
