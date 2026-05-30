@@ -2,6 +2,7 @@ use std::{
 	io::{self, Stdout},
 	time::Duration,
 	path::PathBuf,
+	fs,
 };
 
 use anyhow::Result;
@@ -14,16 +15,23 @@ use pier_core::core::ActivePanel;
 use pier_core::core::Core;
 use pier_ui::ui::{render_root, UiState};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use tokio::time::sleep;
+use tokio::time::{sleep, interval};
 use tokio::io::AsyncBufReadExt;
 
 use super::commands::Quit;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
+pub struct SyncFileInfo {
+	pub depot_path: String,
+	pub local_path: String,
+	pub size: u64,
+}
+
 enum SyncEvent {
-	Start(Vec<String>),
-	Progress(String),
+	Start(Vec<SyncFileInfo>),
+	FileDone(String),
+	ByteProgress(u64),
 	End,
 	Error(String),
 }
@@ -161,15 +169,20 @@ impl App {
 			while let Ok(event) = self.sync_rx.try_recv() {
 				match event {
 					SyncEvent::Start(files) => {
-						self.core.sync_files = files;
+						self.core.sync_total_bytes = files.iter().map(|f| f.size).sum();
+						self.core.sync_files = files.into_iter().map(|f| f.depot_path).collect();
 						self.core.sync_total = self.core.sync_files.len();
 						self.core.sync_current = 0;
+						self.core.sync_synced_bytes = 0;
 						self.core.sync_progress = 0.0;
 					}
-					SyncEvent::Progress(_file) => {
+					SyncEvent::FileDone(_file) => {
 						self.core.sync_current += 1;
-						if self.core.sync_total > 0 {
-							self.core.sync_progress = self.core.sync_current as f64 / self.core.sync_total as f64;
+					}
+					SyncEvent::ByteProgress(bytes) => {
+						self.core.sync_synced_bytes = bytes;
+						if self.core.sync_total_bytes > 0 {
+							self.core.sync_progress = self.core.sync_synced_bytes as f64 / self.core.sync_total_bytes as f64;
 						}
 					}
 					SyncEvent::End => {
@@ -440,26 +453,24 @@ impl App {
 		self.core.sync_files.clear();
 		self.core.sync_total = 0;
 		self.core.sync_current = 0;
+		self.core.sync_total_bytes = 0;
+		self.core.sync_synced_bytes = 0;
 
 		let tx = self.sync_tx.clone();
 		let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
 		self.sync_cancel_tx = Some(cancel_tx);
 
 		let handle = tokio::spawn(async move {
-			// 1. Dry run to get files
+			// 1. Dry run to get files with ztag
 			let mut cmd = tokio::process::Command::new("p4");
-			cmd.arg("sync").arg("-n");
+			cmd.arg("-ztag").arg("sync").arg("-n");
 			if let Some(id) = &cl_id {
 				cmd.arg(format!("@{}", id));
 			}
 			
 			let output = cmd.output().await;
 			let files = if let Ok(out) = output {
-				String::from_utf8_lossy(&out.stdout)
-					.lines()
-					.filter(|l| !l.is_empty())
-					.map(|l| l.to_string())
-					.collect::<Vec<_>>()
+				parse_ztag_sync(&String::from_utf8_lossy(&out.stdout))
 			} else {
 				vec![]
 			};
@@ -469,6 +480,9 @@ impl App {
 				return;
 			}
 
+			// Local paths for progress tracking
+			let sync_info: Vec<(String, u64)> = files.iter().map(|f| (f.local_path.clone(), f.size)).collect();
+			
 			let _ = tx.send(SyncEvent::Start(files));
 
 			// 2. Actual sync
@@ -491,11 +505,34 @@ impl App {
 			let stdout = child.stdout.take().unwrap();
 			let mut reader = tokio::io::BufReader::new(stdout);
 			
+			let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+			let tx_progress = tx.clone();
+			
+			// Progress monitor task
+			tokio::spawn(async move {
+				let mut interval = interval(Duration::from_millis(100));
+				loop {
+					tokio::select! {
+						_ = &mut done_rx => break,
+						_ = interval.tick() => {
+							let mut total_synced = 0;
+							for (path, expected_size) in &sync_info {
+								if let Ok(metadata) = fs::metadata(path) {
+									total_synced += metadata.len().min(*expected_size);
+								}
+							}
+							let _ = tx_progress.send(SyncEvent::ByteProgress(total_synced));
+						}
+					}
+				}
+			});
+
 			loop {
 				let mut line = String::new();
 				tokio::select! {
 					_ = &mut cancel_rx => {
 						let _ = child.kill().await;
+						let _ = done_tx.send(());
 						return;
 					}
 					res = reader.read_line(&mut line) => {
@@ -504,7 +541,7 @@ impl App {
 							Ok(_) => {
 								let trimmed = line.trim();
 								if !trimmed.is_empty() {
-									let _ = tx.send(SyncEvent::Progress(trimmed.to_string()));
+									let _ = tx.send(SyncEvent::FileDone(trimmed.to_string()));
 								}
 							}
 							Err(_) => break,
@@ -514,8 +551,44 @@ impl App {
 			}
 
 			let _ = child.wait().await;
+			let _ = done_tx.send(());
 			let _ = tx.send(SyncEvent::End);
 		});
 		self.sync_handle = Some(handle);
 	}
+}
+
+fn parse_ztag_sync(output: &str) -> Vec<SyncFileInfo> {
+	let mut files = Vec::new();
+	let mut depot_path = String::new();
+	let mut local_path = String::new();
+	let mut size = 0;
+
+	for line in output.lines() {
+		if let Some(rest) = line.strip_prefix("... depotFile ") {
+			if !depot_path.is_empty() {
+				files.push(SyncFileInfo {
+					depot_path: std::mem::take(&mut depot_path),
+					local_path: std::mem::take(&mut local_path),
+					size,
+				});
+				size = 0;
+			}
+			depot_path = rest.to_string();
+		} else if let Some(rest) = line.strip_prefix("... clientFile ") {
+			local_path = rest.to_string();
+		} else if let Some(rest) = line.strip_prefix("... fileSize ") {
+			size = rest.parse().unwrap_or(0);
+		}
+	}
+
+	if !depot_path.is_empty() {
+		files.push(SyncFileInfo {
+			depot_path,
+			local_path,
+			size,
+		});
+	}
+
+	files
 }

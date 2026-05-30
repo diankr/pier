@@ -77,6 +77,8 @@ pub struct Core {
   pub sync_files: Vec<String>,
   pub sync_total: usize,
   pub sync_current: usize,
+  pub sync_total_bytes: u64,
+  pub sync_synced_bytes: u64,
 
   pub synced_change_id: Option<String>,
 }
@@ -146,6 +148,8 @@ impl Core {
       sync_files: Vec::new(),
       sync_total: 0,
       sync_current: 0,
+      sync_total_bytes: 0,
+      sync_synced_bytes: 0,
 
       synced_change_id: None,
 

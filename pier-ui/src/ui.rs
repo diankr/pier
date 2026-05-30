@@ -924,7 +924,15 @@ fn render_sync_overlay(f: &mut Frame, area: Rect, core: &Core) {
     .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(Style::default().fg(theme().component.active_pane_border));
 
-  let label = format!("{:.0}%", core.sync_progress * 100.0);
+  let label = if core.sync_total_bytes > 0 {
+    format!("{:.1}% ({:.1} MB / {:.1} MB)", 
+      core.sync_progress * 100.0,
+      core.sync_synced_bytes as f64 / 1024.0 / 1024.0,
+      core.sync_total_bytes as f64 / 1024.0 / 1024.0
+    )
+  } else {
+    format!("{:.0}%", core.sync_progress * 100.0)
+  };
   let gauge = Gauge::default()
     .block(progress_block)
     .gauge_style(Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::ITALIC))
