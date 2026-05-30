@@ -287,7 +287,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     ActivePanel::Scope      => "[Enter] p4 info",
     ActivePanel::FileTree   => "[c] checkout | [a] add | [d] delete | [r] revert",
     ActivePanel::Pending    => "[S] submit | [r] revert",
-    ActivePanel::ChangeList => "[s] fetch & sync | [f] fetch | [g] sync to selected | [Shift+f] show in filetree",
+    ActivePanel::ChangeList => "[s] fetch & sync | [f] fetch | [g] sync to selected | [F] show in filetree",
 
     ActivePanel::Detail     => "[y] copy to clipboard",
     _ => "",
@@ -678,10 +678,12 @@ fn render_detail(f: &mut Frame, area: Rect, core: &Core) {
     let mut items = Vec::new();
     let content_width = (inner.width as usize).saturating_sub(4);
 
+    let checkout_by = detail.checkout_by.trim();
+
     // [CheckoutBy] Header if not empty
-    if !detail.checkout_by.trim().is_empty() {
+    if !checkout_by.is_empty() {
       let checkout_label = "CheckoutBy:";
-      let checkout_val = &detail.checkout_by;
+      let checkout_val = checkout_by;
       
       let pad_len = content_width.saturating_sub(checkout_label.len()).saturating_sub(checkout_val.len());
       let line = Line::from(vec![

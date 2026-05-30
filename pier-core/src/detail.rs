@@ -30,6 +30,9 @@ pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
 	}
 
 	let stdout = String::from_utf8_lossy(&output.stdout);
+	// Debug log
+	// println!("fstat output for {}: {}", path.display(), stdout);
+
 	let mut detail = FileDetail {
 		filename: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
 		filesize: "".to_string(),
@@ -58,13 +61,11 @@ pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
 			k if k.eq_ignore_ascii_case("depotFile") => {
 				if let Some(last_slash) = value.rfind('/') {
 					let dir = &value[..last_slash];
-					// 替换 //depot/ 为 .../ 或者 //depot 为 ...
 					if dir.starts_with("//depot") {
 						detail.depot_path = dir.replacen("//depot", "...", 1);
 					} else {
 						detail.depot_path = dir.to_string();
 					}
-					
 					if !detail.depot_path.ends_with('/') {
 						detail.depot_path.push('/');
 					}
@@ -79,13 +80,16 @@ pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
 				}
 			}
 			k if k.eq_ignore_ascii_case("headChange") => detail.changelist = value.to_string(),
-			k if k.starts_with("otherOpen") => {
-				if detail.checkout_by.is_empty() || detail.checkout_by == "Unknown" {
-					detail.checkout_by = value.split('@').next().unwrap_or(value).to_string();
+			k if k.to_lowercase().starts_with("otheropen") => {
+				// common keys: otherOpen (count), otherOpen0, otherOpen1...
+				// Skip "otherOpen" count and only take values with @ (user@client)
+				if k.len() > 9 && value.contains('@') {
+					if detail.checkout_by.is_empty() || detail.checkout_by == "Unknown" {
+						detail.checkout_by = value.split('@').next().unwrap_or(value).to_string();
+					}
 				}
 			}
 			k if k.eq_ignore_ascii_case("action") || k.eq_ignore_ascii_case("change") => {
-				// 如果有本地 action 或 change 字段，说明当前用户打开了该文件
 				if detail.checkout_by.is_empty() || detail.checkout_by == "Unknown" {
 					detail.checkout_by = "You".to_string();
 				}
@@ -94,7 +98,6 @@ pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
 				}
 			}
 			k if k.eq_ignore_ascii_case("headAction") => {
-				// 只有在还没有本地 action 的时候才使用 headAction
 				if detail.action.is_empty() {
 					detail.action = value.to_string();
 				}
@@ -192,6 +195,41 @@ pub fn fetch_file_detail(path: &Path) -> Result<FileDetail, String> {
 	}
 
 	save_to_cache(path, &detail);
+
+	// Fallback for checkout_by using p4 opened -a if it's still empty or "Unknown"
+	if detail.checkout_by.is_empty() || detail.checkout_by == "Unknown" {
+		let opened_output = Command::new("p4")
+			.arg("opened")
+			.arg("-a")
+			.arg(path)
+			.output();
+		
+		if let Ok(out) = opened_output {
+			let stdout = String::from_utf8_lossy(&out.stdout);
+			if let Some(line) = stdout.lines().next() {
+				// line format: //depot/path#rev - action change user@client (type)
+				if let Some(dash_idx) = line.find(" - ") {
+					let after_dash = &line[dash_idx + 3..];
+					let parts: Vec<&str> = after_dash.split_whitespace().collect();
+					
+					// Find the part that contains '@', which should be user@client
+					if let Some(user_at_client) = parts.iter().find(|p| p.contains('@')) {
+						let user = user_at_client.split('@').next().unwrap_or(user_at_client);
+						
+						// Check if it's the current user/client
+						let p4_user = std::env::var("P4USER").unwrap_or_default();
+						let p4_client = std::env::var("P4CLIENT").unwrap_or_default();
+						if !p4_user.is_empty() && !p4_client.is_empty() && user_at_client.contains(&format!("{}@{}", p4_user, p4_client)) {
+							detail.checkout_by = "You".to_string();
+						} else {
+							detail.checkout_by = user.to_string();
+						}
+						save_to_cache(path, &detail);
+					}
+				}
+			}
+		}
+	}
 
 	Ok(detail)
 }
