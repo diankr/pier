@@ -2,6 +2,8 @@
 name = "pier-config"
 version = "0.1.0"
 edition = "2021"
+authors = [ "diankr" ]
+repository = "https://github.com/diankr/pier"
 
 [dependencies]
 anyhow = { workspace = true }

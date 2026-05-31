@@ -3,9 +3,9 @@ name        = "pier-core"
 version     = "0.0.1"
 edition     = "2024"
 license     = "MIT"
-authors     = [ "DehKaine" ]
-description = "Pier Core"
-repository  = "https://github.com/DehKaine/pier"
+authors     = [ "diankr" ]
+description = "Pier core logic"
+repository  = "https://github.com/diankr/pier"
 
 [dependencies]
 pier-macro = { path = "../pier-macro" }

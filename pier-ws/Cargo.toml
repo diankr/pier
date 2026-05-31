@@ -3,9 +3,9 @@ name        = "pier-ws"
 version     = "0.0.1"
 edition     = "2024"
 license     = "MIT"
-authors     = [ "DehKaine" ]
+authors     = [ "diankr" ]
 description = "Pier workspace"
-repository  = "https://github.com/DehKaine/pier"
+repository  = "https://github.com/diankr/pier"
 
 [dependencies]
 pier-core  = { path = "../pier-core" }

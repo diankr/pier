@@ -3,9 +3,9 @@ name        = "pier-ui"
 version     = "0.0.1"
 edition     = "2024"
 license     = "MIT"
-authors     = [ "DehKaine" ]
-description = "Pier UI Component"
-repository  = "https://github.com/DehKaine/pier"
+authors     = [ "diankr" ]
+description = "Pier UI components"
+repository  = "https://github.com/diankr/pier"
 
 [dependencies]
 pier-core   = { path = "../pier-core" }
