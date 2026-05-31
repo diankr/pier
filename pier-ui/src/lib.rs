@@ -1,2 +1,2 @@
-
-pier_macro::mod_pub!(ui);
+pub(crate) mod components;
+pub mod ui;
