@@ -90,6 +90,8 @@ pub struct Icons {
   pub changelist_head: String,
   pub pending_default: String,
   pub client_root: String,
+  pub virtual_root: String,
+  pub check: String,
   pub untracked: String,
   pub file_default: String,
 }
@@ -107,6 +109,8 @@ impl Default for Icons {
       changelist_head: char_from_hex("f0273").to_string(),
       pending_default: char_from_hex("f14b").to_string(),
       client_root: char_from_hex("f06d9").to_string(),
+      virtual_root: char_from_hex("f191f").to_string(),
+      check: char_from_hex("f05d").to_string(),
       untracked: char_from_hex("f1036").to_string(),
       file_default: char_from_hex("f0214").to_string(),
     }

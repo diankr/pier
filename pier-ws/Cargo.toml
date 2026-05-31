@@ -14,6 +14,7 @@ pier-ui    = { path = "../pier-ui" }
 
 # External dependencies
 anyhow       = { workspace = true }
+arboard      = { workspace = true }
 crossterm    = { workspace = true }
 # mlua         = { workspace = true }
 ratatui      = { workspace = true }

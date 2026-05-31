@@ -1,5 +1,5 @@
 use pier_config::theme;
-use pier_core::core::{ActivePanel, Core, SubmitFocus};
+use pier_core::core::{ActivePanel, Core, SubmitFocus, InfoFocus};
 use pier_core::filetree::FileP4Status;
 use ratatui::{
   layout::{Constraint, Direction, Layout, Rect, Alignment},
@@ -324,10 +324,14 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     .style(Style::default().fg(theme().component.pane_border));
   f.render_widget(footer, footer_area);
   
+  if core.is_info_overlay_open {
+    render_p4_info_overlay(f, area, core);
+  }
+
   if core.is_submit_overlay_open {
     render_submit_overlay(f, area, core);
   }
-  
+
   if core.is_login_overlay_open {
     render_login_overlay(f, area, core);
   }
@@ -335,7 +339,7 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
   if core.is_syncing {
     render_sync_overlay(f, area, core);
   }
-}
+  }
 
 fn render_login_overlay(f: &mut Frame, area: Rect, core: &Core) {
   let mut overlay_area = centered_rect(60, 25, area);
@@ -462,6 +466,8 @@ fn render_filetree(f: &mut Frame, area: Rect, core: &Core) {
     let (icon, color) = if file.is_dir {
       if file.path == core.client_root {
         (&theme().icon.client_root, theme().component.default_text)
+      } else if core.virtual_root.as_ref() == Some(&file.path) {
+        (&theme().icon.virtual_root, theme().component.active_pane_border)
       } else if is_selected {
         (&theme().icon.folder_open, theme().component.default_text)
       } else if file.is_empty {
@@ -1010,4 +1016,88 @@ fn render_sync_overlay(f: &mut Frame, area: Rect, core: &Core) {
     state.select(Some(core.sync_current.saturating_sub(1)));
   }
   f.render_stateful_widget(list, chunks[1], &mut state);
+}
+
+fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
+  let overlay_area = centered_rect(70, 70, area);
+  f.render_widget(ratatui::widgets::Clear, overlay_area);
+
+  let chunks = Layout::default()
+    .direction(Direction::Vertical)
+    .constraints([
+      Constraint::Min(6),    // Roots
+      Constraint::Min(0),    // P4 Info
+    ])
+    .split(overlay_area);
+
+  // Upper Block: Roots
+  let roots_block = Block::default()
+    .title(Line::from("─Roots ").alignment(Alignment::Center))
+    .borders(Borders::ALL)
+    .border_set(ratatui::symbols::border::ROUNDED)
+    .border_style(Style::default().fg(if core.info_focus == InfoFocus::Roots { theme().component.active_pane_border } else { theme().component.pane_border }));
+
+  let mut roots_items = Vec::new();
+  
+  // Client Root
+  let is_cr_active = core.virtual_root.is_none();
+  let cr_icon = if core.is_roots_expanded { &theme().icon.folder_open } else { &theme().icon.folder };
+  let cr_check = if is_cr_active { format!(" {}", theme().icon.check) } else { "".to_string() };
+  
+  let cr_line = Line::from(vec![
+    Span::raw(format!("{} ", cr_icon)),
+    Span::raw("client root"),
+    Span::styled(cr_check, Style::default().fg(Color::Green)),
+    Span::raw(format!(" {:>width$}", core.client_root.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(20))),
+  ]);
+  roots_items.push(ListItem::new(cr_line));
+
+  // Virtual Roots
+  if core.is_roots_expanded {
+    for (i, vr) in core.virtual_root_history.iter().enumerate() {
+      let is_vr_active = core.virtual_root.as_ref() == Some(vr);
+      let vr_check = if is_vr_active { format!(" {}", theme().icon.check) } else { "".to_string() };
+      
+      let vr_line = Line::from(vec![
+        Span::raw("  "),
+        Span::raw(format!("virtual root {}", i + 1)),
+        Span::styled(vr_check, Style::default().fg(Color::Green)),
+        Span::raw(format!(" {:>width$}", vr.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(25))),
+      ]);
+      roots_items.push(ListItem::new(vr_line));
+    }
+  }
+
+  let roots_list = List::new(roots_items)
+    .block(roots_block)
+    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+  
+  let mut roots_state = ratatui::widgets::ListState::default();
+  roots_state.select(Some(core.info_roots_cursor));
+  f.render_stateful_widget(roots_list, chunks[0], &mut roots_state);
+
+  // Lower Block: P4 Info
+  let info_block = Block::default()
+    .title(Line::from("─p4 info (tab to toggle view) ").alignment(Alignment::Center))
+    .borders(Borders::ALL)
+    .border_set(ratatui::symbols::border::ROUNDED)
+    .border_style(Style::default().fg(if core.info_focus == InfoFocus::Details { theme().component.active_pane_border } else { theme().component.pane_border }));
+
+  let info_items: Vec<ListItem> = core.info_details.iter().enumerate().map(|(_idx, (k, v))| {
+    let key_width = 20;
+    let val_width = (chunks[1].width as usize).saturating_sub(key_width + 5);
+    let line = Line::from(vec![
+      Span::raw(format!("{:<width$}", format!("{}:", k), width = key_width)),
+      Span::raw(format!(" {:>width$}", v, width = val_width)),
+    ]);
+    ListItem::new(line)
+  }).collect();
+
+  let info_list = List::new(info_items)
+    .block(info_block)
+    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+
+  let mut info_state = ratatui::widgets::ListState::default();
+  info_state.select(Some(core.info_details_cursor));
+  f.render_stateful_widget(info_list, chunks[1], &mut info_state);
 }

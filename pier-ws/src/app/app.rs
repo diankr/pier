@@ -229,6 +229,8 @@ impl App {
 								}
 								self.core.is_syncing = false;
 							}
+						} else if self.core.is_info_overlay_open {
+							self.handle_info_keys(key);
 						} else if self.core.is_login_overlay_open {
 							self.handle_login_keys(key);
 						} else if self.core.is_submit_overlay_open {
@@ -255,6 +257,77 @@ impl App {
 			}
 			(KeyCode::Backspace, _) => {
 				self.core.login_password.pop();
+			}
+			_ => {}
+		}
+	}
+
+	fn handle_info_keys(&mut self, key: event::KeyEvent) {
+		match (key.code, key.modifiers) {
+			(KeyCode::Esc, _) => self.core.is_info_overlay_open = false,
+			(KeyCode::Tab, _) => {
+				self.core.info_focus = match self.core.info_focus {
+					pier_core::core::InfoFocus::Roots => pier_core::core::InfoFocus::Details,
+					pier_core::core::InfoFocus::Details => pier_core::core::InfoFocus::Roots,
+				};
+			}
+			(KeyCode::Char('j'), _) => {
+				match self.core.info_focus {
+					pier_core::core::InfoFocus::Roots => {
+						let max = if self.core.is_roots_expanded { self.core.virtual_root_history.len() } else { 0 };
+						if self.core.info_roots_cursor < max {
+							self.core.info_roots_cursor += 1;
+						}
+					}
+					pier_core::core::InfoFocus::Details => {
+						if self.core.info_details_cursor < self.core.info_details.len().saturating_sub(1) {
+							self.core.info_details_cursor += 1;
+						}
+					}
+				}
+			}
+			(KeyCode::Char('k'), _) => {
+				match self.core.info_focus {
+					pier_core::core::InfoFocus::Roots => {
+						if self.core.info_roots_cursor > 0 {
+							self.core.info_roots_cursor -= 1;
+						}
+					}
+					pier_core::core::InfoFocus::Details => {
+						if self.core.info_details_cursor > 0 {
+							self.core.info_details_cursor -= 1;
+						}
+					}
+				}
+			}
+			(KeyCode::Char('l'), _) if self.core.info_focus == pier_core::core::InfoFocus::Roots => {
+				self.core.is_roots_expanded = true;
+			}
+			(KeyCode::Char('h'), _) if self.core.info_focus == pier_core::core::InfoFocus::Roots => {
+				self.core.is_roots_expanded = false;
+				self.core.info_roots_cursor = 0;
+			}
+			(KeyCode::Enter, _) if self.core.info_focus == pier_core::core::InfoFocus::Roots => {
+				if self.core.info_roots_cursor == 0 {
+					self.core.virtual_root = None;
+				} else if let Some(vr) = self.core.virtual_root_history.get(self.core.info_roots_cursor - 1) {
+					self.core.virtual_root = Some(vr.clone());
+				}
+				self.core.save_config();
+				// Refresh changelists for the new virtual root
+				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
+					self.core.changelists = cls;
+					self.core.cl_cursor = 0;
+					self.core.expanded_ids.clear();
+				}
+			}
+			(KeyCode::Char('y'), _) if self.core.info_focus == pier_core::core::InfoFocus::Details => {
+				if let Some((_, v)) = self.core.info_details.get(self.core.info_details_cursor) {
+					use arboard::Clipboard;
+					if let Ok(mut clipboard) = Clipboard::new() {
+						let _ = clipboard.set_text(v.clone());
+					}
+				}
 			}
 			_ => {}
 		}
@@ -354,7 +427,9 @@ impl App {
 							self.core.virtual_root = None;
 						} else {
 							self.core.virtual_root = Some(file.path.clone());
+							self.core.add_to_virtual_root_history(file.path.clone());
 						}
+						self.core.save_config();
 						// Refresh changelists for the new virtual root
 						if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
 							self.core.changelists = cls;
@@ -400,6 +475,12 @@ impl App {
 					self.core.changelists = cls;
 				}
 				self.last_cl_refresh = std::time::Instant::now();
+			}
+			
+			(KeyCode::Enter, _) if self.core.active_panel == ActivePanel::Scope => {
+				self.core.is_info_overlay_open = true;
+				self.core.info_focus = pier_core::core::InfoFocus::Roots;
+				self.core.update_p4_info_details();
 			}
 			(KeyCode::Char('F'), _) if self.core.active_panel == ActivePanel::ChangeList => {
 				if let Some(target) = self.core.get_cl_target_at(self.core.cl_cursor) {

@@ -2,6 +2,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::collections::{HashSet, HashMap};
+use std::fs;
+use serde::{Serialize, Deserialize};
 use crate::filetree::{FileTree, FileP4Status};
 use crate::changelist::{ChangeListItem, ChangeListFile, fetch_changelists, fetch_changelist_detail};
 use crate::detail::{FileDetail, fetch_file_detail};
@@ -16,6 +18,12 @@ pub enum ActivePanel {
   Log,
   Input,
   Confirm,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum InfoFocus {
+  Roots,
+  Details,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -40,11 +48,25 @@ pub struct SyncFileInfo {
   pub original_index: usize,
 }
 
+#[derive(Serialize, Deserialize, Default)]
+pub struct PierConfig {
+  pub virtual_root: Option<PathBuf>,
+  pub virtual_root_history: Vec<PathBuf>,
+}
+
 pub struct Core {
   pub active_panel: ActivePanel,
   pub filetree: FileTree,
   pub client_root: PathBuf,
   pub virtual_root: Option<PathBuf>,
+  pub virtual_root_history: Vec<PathBuf>,
+
+  pub is_info_overlay_open: bool,
+  pub info_focus: InfoFocus,
+  pub info_roots_cursor: usize,
+  pub info_details_cursor: usize,
+  pub is_roots_expanded: bool,
+  pub info_details: Vec<(String, String)>,
 
   pub changelists: Vec<ChangeListItem>,
   pub expanded_ids: HashSet<String>,
@@ -98,8 +120,12 @@ impl Core {
     let (client_root, login_user, login_server, mut needs_login) = Self::detect_p4_info()?;
     let _ = env::set_current_dir(&client_root);
     
+    let config = Self::load_config();
+    let virtual_root = config.virtual_root;
+    let virtual_root_history = config.virtual_root_history;
+
     // Attempt to fetch changelists, but don't fail if it's a login issue
-    let changelists = match fetch_changelists(&client_root, None) {
+    let changelists = match fetch_changelists(&client_root, virtual_root.as_deref()) {
       Ok(cls) => cls,
       Err(e) => {
         if e.contains("please login again") || e.contains("password") {
@@ -124,7 +150,14 @@ impl Core {
       active_panel: ActivePanel::FileTree,
       filetree: FileTree::new(client_root.clone()),
       client_root,
-      virtual_root: None,
+      virtual_root,
+      virtual_root_history,
+      is_info_overlay_open: false,
+      info_focus: InfoFocus::Roots,
+      info_roots_cursor: 0,
+      info_details_cursor: 0,
+      is_roots_expanded: true,
+      info_details: Vec::new(),
       changelists,
       expanded_ids: HashSet::new(),
       cl_cursor: 0,
@@ -163,13 +196,83 @@ impl Core {
       sync_synced_bytes: 0,
 
       synced_change_id: None,
-
     };
+
+    if let Some(vr) = core.virtual_root.clone() {
+      core.jump_to_file(&vr);
+    }
+
     if !needs_login {
       core.detect_synced_change();
       core.refresh_all();
     }
     Ok(core)
+  }
+
+  pub fn load_config() -> PierConfig {
+    dirs::config_dir()
+      .map(|d| d.join("pier/pier.json"))
+      .and_then(|path| {
+        if path.exists() {
+          fs::read_to_string(path).ok().and_then(|content| {
+            serde_json::from_str::<PierConfig>(&content).ok()
+          })
+        } else {
+          None
+        }
+      })
+      .unwrap_or_default()
+  }
+
+  pub fn save_config(&self) {
+    let config = PierConfig {
+      virtual_root: self.virtual_root.clone(),
+      virtual_root_history: self.virtual_root_history.clone(),
+    };
+    if let Some(path) = dirs::config_dir().map(|d| d.join("pier/pier.json")) {
+      if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+      }
+      if let Ok(content) = serde_json::to_string_pretty(&config) {
+        let _ = fs::write(path, content);
+      }
+    }
+  }
+
+  pub fn add_to_virtual_root_history(&mut self, path: PathBuf) {
+    if self.virtual_root_history.contains(&path) {
+      self.virtual_root_history.retain(|p| p != &path);
+    }
+    self.virtual_root_history.insert(0, path);
+    if self.virtual_root_history.len() > 3 {
+      self.virtual_root_history.pop();
+    }
+    self.save_config();
+  }
+
+  pub fn update_p4_info_details(&mut self) {
+    let output = Command::new("p4")
+      .arg("info")
+      .output();
+    
+    if let Ok(out) = output {
+      let stdout = String::from_utf8_lossy(&out.stdout);
+      self.info_details = stdout.lines()
+        .filter_map(|line| {
+          let parts: Vec<&str> = line.splitn(2, ':').collect();
+          if parts.len() == 2 {
+            let key = parts[0].trim().to_string();
+            if key == "Client root" {
+              None
+            } else {
+              Some((key, parts[1].trim().to_string()))
+            }
+          } else {
+            None
+          }
+        })
+        .collect();
+    }
   }
 
   pub fn detect_synced_change(&mut self) {

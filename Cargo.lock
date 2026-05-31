@@ -1260,6 +1260,7 @@ name = "pier-ws"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "arboard",
  "crossterm 0.29.0",
  "pier-core",
  "pier-macro",
