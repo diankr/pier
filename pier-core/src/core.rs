@@ -31,6 +31,14 @@ pub enum SubmitFocus {
   FileList,
 }
 
+#[derive(Debug, Clone)]
+pub struct SyncFileInfo {
+  pub depot_path: String,
+  pub local_path: String,
+  pub size: u64,
+  pub synced: u64,
+}
+
 pub struct Core {
   pub active_panel: ActivePanel,
   pub filetree: FileTree,
@@ -74,7 +82,7 @@ pub struct Core {
 
   pub is_syncing: bool,
   pub sync_progress: f64,
-  pub sync_files: Vec<String>,
+  pub sync_files: Vec<SyncFileInfo>,
   pub sync_total: usize,
   pub sync_current: usize,
   pub sync_total_bytes: u64,

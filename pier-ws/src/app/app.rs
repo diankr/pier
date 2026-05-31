@@ -22,16 +22,10 @@ use super::commands::Quit;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
-pub struct SyncFileInfo {
-	pub depot_path: String,
-	pub local_path: String,
-	pub size: u64,
-}
-
 enum SyncEvent {
-	Start(Vec<SyncFileInfo>),
+	Start(Vec<pier_core::core::SyncFileInfo>),
 	FileDone(String),
-	ByteProgress(u64),
+	ByteProgress(Vec<u64>),
 	End,
 	Error(String),
 }
@@ -170,7 +164,7 @@ impl App {
 				match event {
 					SyncEvent::Start(files) => {
 						self.core.sync_total_bytes = files.iter().map(|f| f.size).sum();
-						self.core.sync_files = files.into_iter().map(|f| f.depot_path).collect();
+						self.core.sync_files = files;
 						self.core.sync_total = self.core.sync_files.len();
 						self.core.sync_current = 0;
 						self.core.sync_synced_bytes = 0;
@@ -179,8 +173,13 @@ impl App {
 					SyncEvent::FileDone(_file) => {
 						self.core.sync_current += 1;
 					}
-					SyncEvent::ByteProgress(bytes) => {
-						self.core.sync_synced_bytes = bytes;
+					SyncEvent::ByteProgress(progress_vec) => {
+						self.core.sync_synced_bytes = progress_vec.iter().sum();
+						for (i, &synced) in progress_vec.iter().enumerate() {
+							if let Some(file) = self.core.sync_files.get_mut(i) {
+								file.synced = synced;
+							}
+						}
 						if self.core.sync_total_bytes > 0 {
 							self.core.sync_progress = self.core.sync_synced_bytes as f64 / self.core.sync_total_bytes as f64;
 						}
@@ -515,13 +514,16 @@ impl App {
 					tokio::select! {
 						_ = &mut done_rx => break,
 						_ = interval.tick() => {
-							let mut total_synced = 0;
+							let mut progress_vec = Vec::with_capacity(sync_info.len());
 							for (path, expected_size) in &sync_info {
-								if let Ok(metadata) = fs::metadata(path) {
-									total_synced += metadata.len().min(*expected_size);
-								}
+								let synced = if let Ok(metadata) = fs::metadata(path) {
+									metadata.len().min(*expected_size)
+								} else {
+									0
+								};
+								progress_vec.push(synced);
 							}
-							let _ = tx_progress.send(SyncEvent::ByteProgress(total_synced));
+							let _ = tx_progress.send(SyncEvent::ByteProgress(progress_vec));
 						}
 					}
 				}
@@ -558,7 +560,7 @@ impl App {
 	}
 }
 
-fn parse_ztag_sync(output: &str) -> Vec<SyncFileInfo> {
+fn parse_ztag_sync(output: &str) -> Vec<pier_core::core::SyncFileInfo> {
 	let mut files = Vec::new();
 	let mut depot_path = String::new();
 	let mut local_path = String::new();
@@ -567,10 +569,11 @@ fn parse_ztag_sync(output: &str) -> Vec<SyncFileInfo> {
 	for line in output.lines() {
 		if let Some(rest) = line.strip_prefix("... depotFile ") {
 			if !depot_path.is_empty() {
-				files.push(SyncFileInfo {
+				files.push(pier_core::core::SyncFileInfo {
 					depot_path: std::mem::take(&mut depot_path),
 					local_path: std::mem::take(&mut local_path),
 					size,
+					synced: 0,
 				});
 				size = 0;
 			}
@@ -583,10 +586,11 @@ fn parse_ztag_sync(output: &str) -> Vec<SyncFileInfo> {
 	}
 
 	if !depot_path.is_empty() {
-		files.push(SyncFileInfo {
+		files.push(pier_core::core::SyncFileInfo {
 			depot_path,
 			local_path,
 			size,
+			synced: 0,
 		});
 	}
 

@@ -925,11 +925,23 @@ fn render_sync_overlay(f: &mut Frame, area: Rect, core: &Core) {
     .border_style(Style::default().fg(theme().component.active_pane_border));
 
   let label = if core.sync_total_bytes > 0 {
-    format!("{:.1}% ({:.1} MB / {:.1} MB)", 
-      core.sync_progress * 100.0,
+    let pct = format!("{:.1}%", core.sync_progress * 100.0);
+    let bytes = format!("{:.1} MB / {:.1} MB", 
       core.sync_synced_bytes as f64 / 1024.0 / 1024.0,
       core.sync_total_bytes as f64 / 1024.0 / 1024.0
-    )
+    );
+    
+    let gauge_width = chunks[0].width.saturating_sub(2) as usize;
+    let pct_len = pct.len();
+    let bytes_len = bytes.len();
+    
+    if gauge_width > pct_len + bytes_len + 4 {
+      let left_padding = (gauge_width - pct_len) / 2;
+      let right_padding = gauge_width.saturating_sub(left_padding + pct_len + bytes_len + 1);
+      format!("{}{}{}{}", " ".repeat(left_padding), pct, " ".repeat(right_padding), bytes)
+    } else {
+      format!("{} ({})", pct, bytes)
+    }
   } else {
     format!("{:.0}%", core.sync_progress * 100.0)
   };
@@ -947,8 +959,36 @@ fn render_sync_overlay(f: &mut Frame, area: Rect, core: &Core) {
     .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(Style::default().fg(theme().component.pane_border));
 
+  let list_width = chunks[1].width.saturating_sub(4) as usize;
+  let progress_width = 20;
+  let file_name_width = list_width.saturating_sub(progress_width + 1);
+
   let items: Vec<ListItem> = core.sync_files.iter().map(|f| {
-    ListItem::new(Line::from(vec![Span::raw(" "), Span::raw(f)]))
+    let filename = f.depot_path.split('/').last().unwrap_or(&f.depot_path);
+    let truncated_name = if filename.chars().count() > file_name_width {
+      let mut s: String = filename.chars().take(file_name_width.saturating_sub(3)).collect();
+      s.push_str("...");
+      s
+    } else {
+      filename.to_string()
+    };
+    
+    let ratio = if f.size > 0 {
+      (f.synced as f64 / f.size as f64).min(1.0)
+    } else {
+      0.0
+    };
+    
+    let filled = (ratio * progress_width as f64).round() as usize;
+    let empty = progress_width.saturating_sub(filled);
+    let bar = format!("[{}{}]", "▪".repeat(filled), " ".repeat(empty));
+    
+    let line = Line::from(vec![
+      Span::raw(format!("{:<width$}", truncated_name, width = file_name_width)),
+      Span::raw(" "),
+      Span::styled(bar, Style::default().fg(Color::Yellow)),
+    ]);
+    ListItem::new(line)
   }).collect();
 
   let list = List::new(items)
