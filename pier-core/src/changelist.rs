@@ -102,13 +102,23 @@ pub fn save_to_cache(items: &[ChangeListItem]) {
 	}
 }
 
-pub fn fetch_changelists(root: &Path) -> Result<Vec<ChangeListItem>, String> {
-	let output = Command::new("p4")
-		.arg("changes")
+pub fn fetch_changelists(root: &Path, filter_path: Option<&Path>) -> Result<Vec<ChangeListItem>, String> {
+	let mut cmd = Command::new("p4");
+	cmd.arg("changes")
 		.arg("-t")
 		.arg("-m")
-		.arg("10")
-		.current_dir(root)
+		.arg("10");
+
+	if let Some(path) = filter_path {
+		let path_str = path.to_string_lossy().into_owned();
+		if path.is_dir() {
+			cmd.arg(format!("{}/...", path_str));
+		} else {
+			cmd.arg(path_str);
+		}
+	}
+
+	let output = cmd.current_dir(root)
 		.output()
 		.map_err(|e| format!("Failed to execute p4 changes: {}", e))?;
 

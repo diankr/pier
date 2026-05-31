@@ -37,12 +37,14 @@ pub struct SyncFileInfo {
   pub local_path: String,
   pub size: u64,
   pub synced: u64,
+  pub original_index: usize,
 }
 
 pub struct Core {
   pub active_panel: ActivePanel,
   pub filetree: FileTree,
   pub client_root: PathBuf,
+  pub virtual_root: Option<PathBuf>,
 
   pub changelists: Vec<ChangeListItem>,
   pub expanded_ids: HashSet<String>,
@@ -97,7 +99,7 @@ impl Core {
     let _ = env::set_current_dir(&client_root);
     
     // Attempt to fetch changelists, but don't fail if it's a login issue
-    let changelists = match fetch_changelists(&client_root) {
+    let changelists = match fetch_changelists(&client_root, None) {
       Ok(cls) => cls,
       Err(e) => {
         if e.contains("please login again") || e.contains("password") {
@@ -122,6 +124,7 @@ impl Core {
       active_panel: ActivePanel::FileTree,
       filetree: FileTree::new(client_root.clone()),
       client_root,
+      virtual_root: None,
       changelists,
       expanded_ids: HashSet::new(),
       cl_cursor: 0,
@@ -239,7 +242,7 @@ impl Core {
     self.update_file_p4_statuses();
     self.update_pending_files();
     self.update_detail();
-    if let Ok(cls) = fetch_changelists(&self.client_root) {
+    if let Ok(cls) = fetch_changelists(&self.client_root, self.virtual_root.as_deref()) {
       self.changelists = cls;
     }
   }
@@ -680,7 +683,7 @@ impl Core {
     self.is_submit_overlay_open = false;
     
     // 同步刷新 Changelist
-    if let Ok(changelists) = fetch_changelists(&self.client_root) {
+    if let Ok(changelists) = fetch_changelists(&self.client_root, self.virtual_root.as_deref()) {
       self.changelists = changelists;
       self.cl_cursor = 0;
       self.expanded_ids.clear();

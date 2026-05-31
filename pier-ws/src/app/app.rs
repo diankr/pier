@@ -175,11 +175,19 @@ impl App {
 					}
 					SyncEvent::ByteProgress(progress_vec) => {
 						self.core.sync_synced_bytes = progress_vec.iter().sum();
-						for (i, &synced) in progress_vec.iter().enumerate() {
-							if let Some(file) = self.core.sync_files.get_mut(i) {
+						for file in self.core.sync_files.iter_mut() {
+							if let Some(&synced) = progress_vec.get(file.original_index) {
 								file.synced = synced;
 							}
 						}
+						
+						// Stable sort: files with progress (synced > 0) move to top
+						self.core.sync_files.sort_by(|a, b| {
+							let a_started = a.synced > 0;
+							let b_started = b.synced > 0;
+							b_started.cmp(&a_started)
+						});
+
 						if self.core.sync_total_bytes > 0 {
 							self.core.sync_progress = self.core.sync_synced_bytes as f64 / self.core.sync_total_bytes as f64;
 						}
@@ -200,7 +208,7 @@ impl App {
 			}
 
 			if self.last_cl_refresh.elapsed() >= Duration::from_secs(60) {
-				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root) {
+				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
 					self.core.changelists = cls;
 				}
 				self.last_cl_refresh = std::time::Instant::now();
@@ -339,6 +347,23 @@ impl App {
 			(KeyCode::Char('a'), _) if self.core.active_panel == ActivePanel::FileTree => {
 				self.core.ft_p4_add();
 			}
+			(KeyCode::Char('V'), _) if self.core.active_panel == ActivePanel::FileTree => {
+				if let Some(file) = self.core.filetree.files.get(self.core.filetree.selected) {
+					if file.is_dir {
+						if self.core.virtual_root.as_ref() == Some(&file.path) {
+							self.core.virtual_root = None;
+						} else {
+							self.core.virtual_root = Some(file.path.clone());
+						}
+						// Refresh changelists for the new virtual root
+						if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
+							self.core.changelists = cls;
+							self.core.cl_cursor = 0;
+							self.core.expanded_ids.clear();
+						}
+					}
+				}
+			}
 
 			// Pending 导航与操作
 			(KeyCode::Char('j'), _) if self.core.active_panel == ActivePanel::Pending => {
@@ -371,7 +396,7 @@ impl App {
 				self.core.cl_collapse();
 			}
 			(KeyCode::Char('f'), _) if self.core.active_panel == ActivePanel::ChangeList => {
-				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root) {
+				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
 					self.core.changelists = cls;
 				}
 				self.last_cl_refresh = std::time::Instant::now();
@@ -389,7 +414,7 @@ impl App {
 				}
 			}
 			(KeyCode::Char('s'), _) if self.core.active_panel == ActivePanel::ChangeList => {
-				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root) {
+				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
 					self.core.changelists = cls;
 				}
 				self.start_sync(None);
@@ -459,12 +484,18 @@ impl App {
 		let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
 		self.sync_cancel_tx = Some(cancel_tx);
 
+		let virtual_root = self.core.virtual_root.clone();
 		let handle = tokio::spawn(async move {
 			// 1. Dry run to get files with ztag
 			let mut cmd = tokio::process::Command::new("p4");
 			cmd.arg("-ztag").arg("sync").arg("-n");
 			if let Some(id) = &cl_id {
 				cmd.arg(format!("@{}", id));
+			}
+			
+			if let Some(ref vr) = virtual_root {
+				let vr_str = vr.to_string_lossy();
+				cmd.arg(format!("{}/...", vr_str));
 			}
 			
 			let output = cmd.output().await;
@@ -490,6 +521,12 @@ impl App {
 			if let Some(id) = cl_id {
 				cmd.arg(format!("@{}", id));
 			}
+
+			if let Some(ref vr) = virtual_root {
+				let vr_str = vr.to_string_lossy();
+				cmd.arg(format!("{}/...", vr_str));
+			}
+
 			cmd.stdout(std::process::Stdio::piped());
 			cmd.stderr(std::process::Stdio::piped());
 			
@@ -574,6 +611,7 @@ fn parse_ztag_sync(output: &str) -> Vec<pier_core::core::SyncFileInfo> {
 					local_path: std::mem::take(&mut local_path),
 					size,
 					synced: 0,
+					original_index: files.len(),
 				});
 				size = 0;
 			}
@@ -591,6 +629,7 @@ fn parse_ztag_sync(output: &str) -> Vec<pier_core::core::SyncFileInfo> {
 			local_path,
 			size,
 			synced: 0,
+			original_index: files.len(),
 		});
 	}
 

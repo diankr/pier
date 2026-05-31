@@ -115,17 +115,26 @@ pub fn render_root(f: &mut Frame, area: Rect, state: &UiState, core: &Core) {
     .constraints([Constraint::Length(1), Constraint::Min(0)])
     .split(scope_inner)[1];
 
-  let root_str = core.client_root.to_string_lossy();
+  let root_str = core.virtual_root.as_ref()
+    .map(|vr| vr.to_string_lossy())
+    .unwrap_or_else(|| core.client_root.to_string_lossy());
+
+  let is_virtual = core.virtual_root.is_some();
+  let prefix = if is_virtual { "Virtual Root: " } else { "Client Root: " };
+
   let display_text = if scope_padded_area.width > 15 {
-    let prefix = "Client Root: ";
     let full_text = format!("{}{}", prefix, root_str);
     
     if full_text.len() as u16 <= scope_padded_area.width {
       full_text
     } else {
-      let last_part = core.client_root.file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| root_str.to_string());
+      let last_part = if is_virtual {
+        core.virtual_root.as_ref().and_then(|vr| vr.file_name())
+      } else {
+        core.client_root.file_name()
+      }
+      .map(|n| n.to_string_lossy().to_string())
+      .unwrap_or_else(|| root_str.to_string());
       
       let abbreviated = format!("{}.../{}", prefix, last_part);
       if abbreviated.len() as u16 <= scope_padded_area.width {
