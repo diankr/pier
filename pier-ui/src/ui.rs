@@ -1019,12 +1019,20 @@ fn render_sync_overlay(f: &mut Frame, area: Rect, core: &Core) {
 }
 
 fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
-  let overlay_area = centered_rect(70, 70, area);
-  f.render_widget(ratatui::widgets::Clear, overlay_area);
-
   let info_count = core.info_details.len();
   // Fixed height for roots (6) + dynamic height for info (min 6, max 17)
   let info_height_clamped = (info_count + 2).clamp(6, 17) as u16;
+  let total_height = 6 + info_height_clamped;
+  let total_width = (area.width * 70 / 100).max(40);
+  
+  let overlay_area = Rect {
+    x: area.x + (area.width.saturating_sub(total_width)) / 2,
+    y: area.y + (area.height.saturating_sub(total_height)) / 2,
+    width: total_width,
+    height: total_height.min(area.height),
+  };
+
+  f.render_widget(ratatui::widgets::Clear, overlay_area);
 
   let chunks = Layout::default()
     .direction(Direction::Vertical)
@@ -1055,7 +1063,8 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
     Span::styled(format!("{} ", cr_icon), Style::default().fg(cr_color)),
     Span::styled("client root 1", Style::default().fg(cr_color)),
     Span::styled(cr_check, Style::default().fg(cr_color)),
-    Span::raw(format!(" {:>width$}", core.client_root.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(25))),
+    // Right shift path by 2 chars (total 3 spaces)
+    Span::raw(format!("   {:>width$}", core.client_root.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(27))),
   ]);
   roots_items.push(ListItem::new(cr_line));
 
@@ -1072,7 +1081,8 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
         Span::styled(format!("{} ", vr_icon), Style::default().fg(vr_color)),
         Span::styled(format!("virtual root {}", i + 1), Style::default().fg(vr_color)),
         Span::styled(vr_check, Style::default().fg(vr_color)),
-        Span::raw(format!(" {:>width$}", vr.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(30))),
+        // Right shift path by 3 chars (total 4 spaces)
+        Span::raw(format!("    {:>width$}", vr.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(33))),
       ]);
       roots_items.push(ListItem::new(vr_line));
     }
