@@ -1022,11 +1022,15 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
   let overlay_area = centered_rect(70, 70, area);
   f.render_widget(ratatui::widgets::Clear, overlay_area);
 
+  let info_count = core.info_details.len();
+  // Fixed height for roots (6) + dynamic height for info (min 6, max 17)
+  let info_height_clamped = (info_count + 2).clamp(6, 17) as u16;
+
   let chunks = Layout::default()
     .direction(Direction::Vertical)
     .constraints([
-      Constraint::Length(6),    // Roots (fixed 4 lines + 2 borders)
-      Constraint::Min(0),       // P4 Info
+      Constraint::Length(6),                  // Roots (fixed 4 lines + 2 borders)
+      Constraint::Length(info_height_clamped), // P4 Info (max 15 lines + 2 borders)
     ])
     .split(overlay_area);
 
@@ -1042,14 +1046,15 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
   // Client Root
   let is_cr_active = core.virtual_root.is_none();
   let cr_icon = &theme().icon.client_root;
+  let cr_color = if is_cr_active { theme().selection.cursor_bg } else { theme().component.default_text };
   let cr_check = if is_cr_active { format!(" {}", theme().icon.check) } else { "".to_string() };
   let expand_icon = if core.is_roots_expanded { "v" } else { ">" };
   
   let cr_line = Line::from(vec![
     Span::raw(format!(" {} ", expand_icon)),
-    Span::raw(format!("{} ", cr_icon)),
-    Span::raw("client root 1"),
-    Span::styled(cr_check, Style::default().fg(Color::Green)),
+    Span::styled(format!("{} ", cr_icon), Style::default().fg(cr_color)),
+    Span::styled("client root 1", Style::default().fg(cr_color)),
+    Span::styled(cr_check, Style::default().fg(cr_color)),
     Span::raw(format!(" {:>width$}", core.client_root.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(25))),
   ]);
   roots_items.push(ListItem::new(cr_line));
@@ -1058,14 +1063,15 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
   if core.is_roots_expanded {
     for (i, vr) in core.virtual_root_history.iter().enumerate() {
       let is_vr_active = core.virtual_root.as_ref() == Some(vr);
+      let vr_color = if is_vr_active { theme().selection.cursor_bg } else { theme().component.default_text };
       let vr_check = if is_vr_active { format!(" {}", theme().icon.check) } else { "".to_string() };
       let vr_icon = &theme().icon.virtual_root;
       
       let vr_line = Line::from(vec![
         Span::raw("    "), // Extra indentation
-        Span::raw(format!("{} ", vr_icon)),
-        Span::raw(format!("virtual root {}", i + 1)),
-        Span::styled(vr_check, Style::default().fg(Color::Green)),
+        Span::styled(format!("{} ", vr_icon), Style::default().fg(vr_color)),
+        Span::styled(format!("virtual root {}", i + 1), Style::default().fg(vr_color)),
+        Span::styled(vr_check, Style::default().fg(vr_color)),
         Span::raw(format!(" {:>width$}", vr.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(30))),
       ]);
       roots_items.push(ListItem::new(vr_line));
@@ -1077,9 +1083,16 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
     roots_items.push(ListItem::new(""));
   }
 
+  let roots_highlight_style = if core.info_focus == InfoFocus::Roots {
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
+  } else {
+    Style::default().add_modifier(Modifier::UNDERLINED)
+  };
+
   let roots_list = List::new(roots_items)
     .block(roots_block)
-    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+    .highlight_style(roots_highlight_style)
+    .style(Style::default().fg(theme().component.default_text));
   
   let mut roots_state = ratatui::widgets::ListState::default();
   roots_state.select(Some(core.info_roots_cursor));
@@ -1092,7 +1105,7 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
     .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(Style::default().fg(if core.info_focus == InfoFocus::Details { theme().component.active_pane_border } else { theme().component.pane_border }));
 
-  let info_items: Vec<ListItem> = core.info_details.iter().enumerate().map(|(idx, (k, v))| {
+  let info_items: Vec<ListItem> = core.info_details.iter().map(|(k, v)| {
     let key_width = 20;
     let val_width = (chunks[1].width as usize).saturating_sub(key_width + 6);
     let line = Line::from(vec![
@@ -1100,17 +1113,18 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
       Span::raw(format!("{:<width$}", format!("{}:", k), width = key_width)),
       Span::raw(format!(" {:>width$}", v, width = val_width)),
     ]);
-    
-    if core.info_focus != InfoFocus::Details && core.info_details_cursor == idx {
-      ListItem::new(line).style(Style::default().add_modifier(Modifier::UNDERLINED))
-    } else {
-      ListItem::new(line)
-    }
+    ListItem::new(line).style(Style::default().fg(theme().component.default_text))
   }).collect();
+
+  let info_highlight_style = if core.info_focus == InfoFocus::Details {
+    Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD)
+  } else {
+    Style::default().add_modifier(Modifier::UNDERLINED)
+  };
 
   let info_list = List::new(info_items)
     .block(info_block)
-    .highlight_style(Style::default().bg(theme().selection.cursor_bg).fg(theme().selection.cursor_fg).add_modifier(Modifier::BOLD));
+    .highlight_style(info_highlight_style);
 
   let mut info_state = ratatui::widgets::ListState::default();
   info_state.select(Some(core.info_details_cursor));
