@@ -1025,8 +1025,8 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
   let chunks = Layout::default()
     .direction(Direction::Vertical)
     .constraints([
-      Constraint::Min(6),    // Roots
-      Constraint::Min(0),    // P4 Info
+      Constraint::Length(6),    // Roots (fixed 4 lines + 2 borders)
+      Constraint::Min(0),       // P4 Info
     ])
     .split(overlay_area);
 
@@ -1041,14 +1041,16 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
   
   // Client Root
   let is_cr_active = core.virtual_root.is_none();
-  let cr_icon = if core.is_roots_expanded { &theme().icon.folder_open } else { &theme().icon.folder };
+  let cr_icon = &theme().icon.client_root;
   let cr_check = if is_cr_active { format!(" {}", theme().icon.check) } else { "".to_string() };
+  let expand_icon = if core.is_roots_expanded { "v" } else { ">" };
   
   let cr_line = Line::from(vec![
+    Span::raw(format!(" {} ", expand_icon)),
     Span::raw(format!("{} ", cr_icon)),
-    Span::raw("client root"),
+    Span::raw("client root 1"),
     Span::styled(cr_check, Style::default().fg(Color::Green)),
-    Span::raw(format!(" {:>width$}", core.client_root.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(20))),
+    Span::raw(format!(" {:>width$}", core.client_root.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(25))),
   ]);
   roots_items.push(ListItem::new(cr_line));
 
@@ -1057,15 +1059,22 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
     for (i, vr) in core.virtual_root_history.iter().enumerate() {
       let is_vr_active = core.virtual_root.as_ref() == Some(vr);
       let vr_check = if is_vr_active { format!(" {}", theme().icon.check) } else { "".to_string() };
+      let vr_icon = &theme().icon.virtual_root;
       
       let vr_line = Line::from(vec![
-        Span::raw("  "),
+        Span::raw("    "), // Extra indentation
+        Span::raw(format!("{} ", vr_icon)),
         Span::raw(format!("virtual root {}", i + 1)),
         Span::styled(vr_check, Style::default().fg(Color::Green)),
-        Span::raw(format!(" {:>width$}", vr.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(25))),
+        Span::raw(format!(" {:>width$}", vr.to_string_lossy(), width = (chunks[0].width as usize).saturating_sub(30))),
       ]);
       roots_items.push(ListItem::new(vr_line));
     }
+  }
+
+  // Ensure fixed height of 4 lines
+  while roots_items.len() < 4 {
+    roots_items.push(ListItem::new(""));
   }
 
   let roots_list = List::new(roots_items)
@@ -1083,14 +1092,20 @@ fn render_p4_info_overlay(f: &mut Frame, area: Rect, core: &Core) {
     .border_set(ratatui::symbols::border::ROUNDED)
     .border_style(Style::default().fg(if core.info_focus == InfoFocus::Details { theme().component.active_pane_border } else { theme().component.pane_border }));
 
-  let info_items: Vec<ListItem> = core.info_details.iter().enumerate().map(|(_idx, (k, v))| {
+  let info_items: Vec<ListItem> = core.info_details.iter().enumerate().map(|(idx, (k, v))| {
     let key_width = 20;
-    let val_width = (chunks[1].width as usize).saturating_sub(key_width + 5);
+    let val_width = (chunks[1].width as usize).saturating_sub(key_width + 6);
     let line = Line::from(vec![
+      Span::raw(" "), // Extra indentation
       Span::raw(format!("{:<width$}", format!("{}:", k), width = key_width)),
       Span::raw(format!(" {:>width$}", v, width = val_width)),
     ]);
-    ListItem::new(line)
+    
+    if core.info_focus != InfoFocus::Details && core.info_details_cursor == idx {
+      ListItem::new(line).style(Style::default().add_modifier(Modifier::UNDERLINED))
+    } else {
+      ListItem::new(line)
+    }
   }).collect();
 
   let info_list = List::new(info_items)

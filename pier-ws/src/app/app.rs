@@ -308,17 +308,29 @@ impl App {
 				self.core.info_roots_cursor = 0;
 			}
 			(KeyCode::Enter, _) if self.core.info_focus == pier_core::core::InfoFocus::Roots => {
-				if self.core.info_roots_cursor == 0 {
-					self.core.virtual_root = None;
+				let target_path = if self.core.info_roots_cursor == 0 {
+					Some(self.core.client_root.clone())
 				} else if let Some(vr) = self.core.virtual_root_history.get(self.core.info_roots_cursor - 1) {
-					self.core.virtual_root = Some(vr.clone());
-				}
-				self.core.save_config();
-				// Refresh changelists for the new virtual root
-				if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
-					self.core.changelists = cls;
-					self.core.cl_cursor = 0;
-					self.core.expanded_ids.clear();
+					Some(vr.clone())
+				} else {
+					None
+				};
+
+				if let Some(path) = target_path {
+					if self.core.info_roots_cursor == 0 {
+						self.core.virtual_root = None;
+					} else {
+						self.core.virtual_root = Some(path.clone());
+					}
+					self.core.save_config();
+					self.core.enter_path(&path);
+					self.core.is_info_overlay_open = false;
+					// Refresh changelists for the new virtual root
+					if let Ok(cls) = pier_core::changelist::fetch_changelists(&self.core.client_root, self.core.virtual_root.as_deref()) {
+						self.core.changelists = cls;
+						self.core.cl_cursor = 0;
+						self.core.expanded_ids.clear();
+					}
 				}
 			}
 			(KeyCode::Char('y'), _) if self.core.info_focus == pier_core::core::InfoFocus::Details => {

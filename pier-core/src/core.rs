@@ -199,7 +199,7 @@ impl Core {
     };
 
     if let Some(vr) = core.virtual_root.clone() {
-      core.jump_to_file(&vr);
+      core.enter_path(&vr);
     }
 
     if !needs_login {
@@ -711,7 +711,7 @@ impl Core {
     let parent = local_path.parent().unwrap_or(Path::new("/"));
     self.filetree.current_path = parent.to_path_buf();
     self.filetree.refresh();
-    
+
     if let Some(pos) = self.filetree.files.iter().position(|f| f.path == local_path) {
       self.filetree.selected = pos;
       self.active_panel = ActivePanel::FileTree;
@@ -720,6 +720,19 @@ impl Core {
     } else {
       false
     }
+  }
+
+  pub fn enter_path(&mut self, local_path: &Path) -> bool {
+    if !local_path.exists() || !local_path.is_dir() {
+      return false;
+    }
+
+    self.filetree.current_path = local_path.to_path_buf();
+    self.filetree.selected = 0;
+    self.filetree.refresh();
+    self.active_panel = ActivePanel::FileTree;
+    self.update_detail();
+    true
   }
 
   fn sync_cl_cursor_after_collapse(&mut self, collapsed_id: &str) {
