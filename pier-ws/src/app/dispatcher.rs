@@ -52,37 +52,83 @@ impl<'a> Dispatcher<'a> {
 	fn process_sync(&mut self) -> Result<()> {
 		while let Ok(event) = self.app.sync_rx.try_recv() {
 			match event {
-				SyncEvent::Start(files) => {
-					self.app.core.sync_total_bytes = files.iter().map(|f| f.size).sum();
+				SyncEvent::Start(mut files) => {
+					if let Some(first) = files.get_mut(0) {
+						first.status = pier_core::core::SyncFileStatus::Syncing;
+					}
 					self.app.core.sync_files = files;
 					self.app.core.sync_total = self.app.core.sync_files.len();
 					self.app.core.sync_current = 0;
-					self.app.core.sync_synced_bytes = 0;
 					self.app.core.sync_progress = 0.0;
 				}
-				SyncEvent::FileDone(_file) => {
-					self.app.core.sync_current += 1;
-				}
-				SyncEvent::ByteProgress(progress_vec) => {
-					self.app.core.sync_synced_bytes = progress_vec.iter().sum();
+				SyncEvent::FileDone(path) => {
+					// Structured matching: path is now likely the depot path from -ztag
+					let mut found_index = None;
+					for (i, file) in self.app.core.sync_files.iter().enumerate() {
+						if file.depot_path == path || path.contains(&file.depot_path) || (!file.local_path.is_empty() && path.contains(&file.local_path)) {
+							found_index = Some(i);
+							break;
+						}
+					}
+
+					if let Some(idx) = found_index {
+						if self.app.core.sync_files[idx].status != pier_core::core::SyncFileStatus::Done {
+							self.app.core.sync_files[idx].status = pier_core::core::SyncFileStatus::Done;
+							self.app.core.sync_current += 1;
+						}
+					} else {
+						// Fallback: mark the first 'Syncing' file as Done if we can't match specifically
+						if let Some(idx) = self.app.core.sync_files.iter().position(|f| f.status == pier_core::core::SyncFileStatus::Syncing) {
+							self.app.core.sync_files[idx].status = pier_core::core::SyncFileStatus::Done;
+							self.app.core.sync_current += 1;
+						}
+					}
+
+					// Ensure exactly one file is 'Syncing' (the first Pending one)
 					for file in self.app.core.sync_files.iter_mut() {
-						if let Some(&synced) = progress_vec.get(file.original_index) {
-							file.synced = synced;
+						if file.status == pier_core::core::SyncFileStatus::Syncing {
+							file.status = pier_core::core::SyncFileStatus::Syncing; // stay syncing
 						}
 					}
 					
-					self.app.core.sync_files.sort_by(|a, b| {
-						let a_started = a.synced > 0;
-						let b_started = b.synced > 0;
-						b_started.cmp(&a_started)
-					});
-
-					if self.app.core.sync_total_bytes > 0 {
-						self.app.core.sync_progress = self.app.core.sync_synced_bytes as f64 / self.app.core.sync_total_bytes as f64;
+					// If no file is currently syncing, pick the next pending one
+					if !self.app.core.sync_files.iter().any(|f| f.status == pier_core::core::SyncFileStatus::Syncing) {
+						if let Some(next_idx) = self.app.core.sync_files.iter().position(|f| f.status == pier_core::core::SyncFileStatus::Pending) {
+							self.app.core.sync_files[next_idx].status = pier_core::core::SyncFileStatus::Syncing;
+						}
 					}
+
+					if self.app.core.sync_total > 0 {
+						self.app.core.sync_progress = (self.app.core.sync_current as f64 / self.app.core.sync_total as f64).min(1.0);
+					}
+
+					// Sort to put Done/Syncing files at top
+					self.app.core.sync_files.sort_by(|a, b| {
+						use pier_core::core::SyncFileStatus::*;
+						match (&a.status, &b.status) {
+							(Syncing, _) => std::cmp::Ordering::Less,
+							(_, Syncing) => std::cmp::Ordering::Greater,
+							(Done, Done) => b.original_index.cmp(&a.original_index),
+							(Done, Pending) => std::cmp::Ordering::Less,
+							(Pending, Done) => std::cmp::Ordering::Greater,
+							(Pending, Pending) => a.original_index.cmp(&b.original_index),
+						}
+					});
 				}
 				SyncEvent::End => {
-					self.app.core.is_syncing = false;
+					// Mark all as done on exit to ensure 100% progress
+					for file in self.app.core.sync_files.iter_mut() {
+						file.status = pier_core::core::SyncFileStatus::Done;
+					}
+					self.app.core.sync_current = self.app.core.sync_total;
+					self.app.core.sync_progress = 1.0;
+					self.app.core.sync_finished = true; // Set flag
+					
+					// Sort one last time
+					self.app.core.sync_files.sort_by(|a, b| {
+						b.original_index.cmp(&a.original_index)
+					});
+
 					self.app.core.detect_synced_change();
 					self.app.sync_handle = None;
 					self.app.sync_cancel_tx = None;

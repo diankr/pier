@@ -115,6 +115,10 @@ impl App {
 				self.last_cl_refresh = std::time::Instant::now();
 			}
 
+			if self.core.is_syncing {
+				self.core.sync_tick = self.core.sync_tick.wrapping_add(1);
+			}
+
 			self.term.draw(|f| {
 				let area = f.area();
 				render_root(f, area, &self.state, &self.core);
@@ -134,13 +138,19 @@ impl App {
 
 	fn handle_key_event(&mut self, key: event::KeyEvent) {
 		if self.core.is_syncing {
-			if key.code == KeyCode::Esc {
+			if self.core.sync_finished {
+				self.core.is_syncing = false;
+				self.core.sync_finished = false;
+			} else if key.code == KeyCode::Esc {
 				if let Some(cancel) = self.sync_cancel_tx.take() {
 					let _ = cancel.send(());
 				}
 				self.core.is_syncing = false;
 			}
-		} else if self.core.is_info_overlay_open {
+			return;
+		}
+		
+		if self.core.is_info_overlay_open {
 			handlers::info::handle(self, key);
 		} else if self.core.is_login_overlay_open {
 			handlers::login::handle(self, key);
@@ -178,8 +188,8 @@ impl App {
 		self.core.sync_files.clear();
 		self.core.sync_total = 0;
 		self.core.sync_current = 0;
-		self.core.sync_total_bytes = 0;
-		self.core.sync_synced_bytes = 0;
+		self.core.sync_tick = 0;
+		self.core.sync_finished = false;
 
 		let tx = self.sync_tx.clone();
 		let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();

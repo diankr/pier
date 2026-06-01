@@ -39,12 +39,18 @@ pub enum SubmitFocus {
   FileList,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncFileStatus {
+  Pending,
+  Syncing,
+  Done,
+}
+
 #[derive(Debug, Clone)]
 pub struct SyncFileInfo {
   pub depot_path: String,
   pub local_path: String,
-  pub size: u64,
-  pub synced: u64,
+  pub status: SyncFileStatus,
   pub original_index: usize,
 }
 
@@ -109,8 +115,8 @@ pub struct Core {
   pub sync_files: Vec<SyncFileInfo>,
   pub sync_total: usize,
   pub sync_current: usize,
-  pub sync_total_bytes: u64,
-  pub sync_synced_bytes: u64,
+  pub sync_tick: u64,
+  pub sync_finished: bool,
 
   pub synced_change_id: Option<String>,
 }
@@ -192,8 +198,8 @@ impl Core {
       sync_files: Vec::new(),
       sync_total: 0,
       sync_current: 0,
-      sync_total_bytes: 0,
-      sync_synced_bytes: 0,
+      sync_tick: 0,
+      sync_finished: false,
 
       synced_change_id: None,
     };
